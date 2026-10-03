@@ -8,6 +8,7 @@
     "format:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
     "changeset": "changeset",
     "version:packages": "changeset version"
   },
@@ -19,7 +20,8 @@
     "@types/node": "22.19.19",
     "oxfmt": "0.71.0",
     "oxlint": "1.86.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
   },
   "engines": {
     "node": ">=22.19.0"

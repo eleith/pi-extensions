@@ -1,0 +1,34 @@
+{
+  "name": "@eleith/pi-title-status",
+  "version": "0.0.0",
+  "private": false,
+  "description": "Session names and activity indicators in the Pi terminal title",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
+    "directory": "packages/title-status"
+  },
+  "files": [
+    "src/index.ts",
+    "src/config.ts",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "registry": "https://git.eleith.com/api/packages/eleith/npm/"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}

@@ -8,7 +8,7 @@ a handful of small personal extensions to Pi, only using documented APIs.
 | [context](context/README.md)                             | status and controls for the context window                                            |
 | [notifications](notifications/README.md)                 | notifications on turn end using notify-send (with OSC777 fallback for remote support) |
 | [progress](progress/README.md)                           | OSC9;4 progress bars (with TMUX wrapping support) while waiting on a turn             |
-| [title status](title-status/README.md)                   | simple terminal titles with icon progress indicators                                  |
+| [title status](packages/title-status/README.md)          | simple terminal titles with icon progress indicators                                  |
 | [tool rendering](tool-rendering/README.md)               | minimal and pretty rendering for bash/ls/grep/read tool calls                         |
 | [welcome](welcome/README.md)                             | grow a tree everytime you start pi                                                    |
 
