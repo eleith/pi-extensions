@@ -1,0 +1,11 @@
+.nono.json
+node_modules/
+.pnpm-store/
+.corepack/
+.cache/
+coverage/
+dist/
+*.tgz
+*.tsbuildinfo
+.env
+.env.*

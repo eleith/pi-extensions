@@ -1,0 +1,5 @@
+{
+  "ignorePatterns": ["node_modules", ".pnpm-store", ".corepack", ".cache", "coverage", "dist"],
+  "printWidth": 100,
+  "useTabs": false
+}
