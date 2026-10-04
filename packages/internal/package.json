@@ -1,0 +1,19 @@
+{
+  "name": "@eleith/pi-internal",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./config": "./src/config.ts",
+    "./commands": "./src/commands.ts"
+  },
+  "scripts": {
+    "lint": "oxlint --deny-warnings --config ../../.oxlintrc.json src",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

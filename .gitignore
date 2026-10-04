@@ -1,4 +1,5 @@
 .nono.json
+.plan/
 node_modules/
 .pnpm-store/
 .corepack/

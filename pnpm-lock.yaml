@@ -23,6 +23,9 @@ importers:
       '@types/node':
         specifier: 22.19.19
         version: 22.19.19
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       oxfmt:
         specifier: 0.71.0
         version: 0.71.0
@@ -36,7 +39,19 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@22.19.19)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
 
-  packages/title-status: {}
+  extensions/progress:
+    devDependencies:
+      '@eleith/pi-internal':
+        specifier: workspace:*
+        version: link:../../packages/internal
+
+  extensions/title-status:
+    devDependencies:
+      '@eleith/pi-internal':
+        specifier: workspace:*
+        version: link:../../packages/internal
+
+  packages/internal: {}
 
 packages:
 

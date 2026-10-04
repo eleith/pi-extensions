@@ -1,4 +1,5 @@
 packages:
+  - extensions/*
   - packages/*
 autoInstallPeers: false
 storeDir: .pnpm-store

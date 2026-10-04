@@ -7,7 +7,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import titleStatus from "./index.ts";
-import { readCommandPrefix } from "./config.ts";
 
 // Set the disposable directory before Pi imports, including its import-time managed-tool lookup.
 const agentDir = await vi.hoisted(async () => {
@@ -19,7 +18,8 @@ const agentDir = await vi.hoisted(async () => {
   vi.stubEnv("PI_OFFLINE", "1");
   return directory;
 });
-const configPath = join(agentDir, "eleith-extensions.json");
+const configPath = join(agentDir, "extensions", "eleith.json");
+mkdirSync(join(agentDir, "extensions"));
 
 beforeEach(() => {
   rmSync(configPath, { recursive: true, force: true });
@@ -40,11 +40,14 @@ async function load(
   existingCommands: { name: string }[] = [],
 ) {
   type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
-  const listeners = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+  type Listener = (event: unknown, ctx: ExtensionContext) => void;
+  const listeners = new Map<string, Listener[]>();
   const pi = {
-    on: vi.fn((name: string, listener: (event: unknown, ctx: ExtensionContext) => void) => {
-      listeners.set(name, listener);
-      return () => listeners.delete(name);
+    on: vi.fn((name: string, listener: Listener) => {
+      const handlers = listeners.get(name) ?? [];
+      handlers.push(listener);
+      listeners.set(name, handlers);
+      return () => handlers.splice(handlers.indexOf(listener), 1);
     }),
     getCommands: vi.fn(() => existingCommands),
     getSessionName: vi.fn(() => "chat"),
@@ -64,7 +67,7 @@ async function load(
     setTitle,
     notify,
     emit(name: string) {
-      listeners.get(name)?.({ type: name }, ctx);
+      for (const listener of listeners.get(name) ?? []) listener({ type: name }, ctx);
     },
     command() {
       const command = pi.registerCommand.mock.calls[0]?.[1];
@@ -74,50 +77,15 @@ async function load(
   };
 }
 
-describe("title-status configuration", () => {
-  it("defaults only for a missing file or key", async () => {
-    expect(await readCommandPrefix()).toBe("eleith");
-    writeFileSync(configPath, "{}");
-    expect(await readCommandPrefix()).toBe("eleith");
-  });
-
-  it.each(["eleith", "personal", "personal-2"])("uses the configured prefix %s", async (prefix) => {
-    writeFileSync(configPath, JSON.stringify({ commandPrefix: prefix }));
-    expect(await readCommandPrefix()).toBe(prefix);
-  });
-
-  it.each([
-    "{",
-    "null",
-    "[]",
-    '"personal"',
-    '{"unknown":true}',
-    ...[
-      null,
-      42,
-      "",
-      "Personal",
-      "/personal",
-      "personal:tools",
-      "personal tools",
-      "personal\n",
-      "-personal",
-    ].map((commandPrefix) => JSON.stringify({ commandPrefix })),
-  ])("rejects invalid config without registering capabilities: %s", async (config) => {
-    writeFileSync(configPath, config);
-    const on = vi.fn();
-    const registerCommand = vi.fn();
-    await expect(titleStatus({ on, registerCommand } as unknown as ExtensionAPI)).rejects.toThrow(
-      configPath,
-    );
-    expect(on).not.toHaveBeenCalled();
-    expect(registerCommand).not.toHaveBeenCalled();
-  });
-
-  it("reports a read error instead of silently using the default", async () => {
-    mkdirSync(configPath);
-    await expect(readCommandPrefix()).rejects.toThrow(configPath);
-  });
+it("fails invalid config before registering title behavior or commands", async () => {
+  writeFileSync(configPath, '{"commandPrefix":"Invalid Prefix"}');
+  const on = vi.fn();
+  const registerCommand = vi.fn();
+  await expect(titleStatus({ on, registerCommand } as unknown as ExtensionAPI)).rejects.toThrow(
+    configPath,
+  );
+  expect(on).not.toHaveBeenCalled();
+  expect(registerCommand).not.toHaveBeenCalled();
 });
 
 describe("title-status command and lifecycle", () => {

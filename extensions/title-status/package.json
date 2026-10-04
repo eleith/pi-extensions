@@ -10,11 +10,10 @@
   "repository": {
     "type": "git",
     "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
-    "directory": "packages/title-status"
+    "directory": "extensions/title-status"
   },
   "files": [
-    "src/index.ts",
-    "src/config.ts",
+    "dist/index.js",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
@@ -23,12 +22,22 @@
   "publishConfig": {
     "registry": "https://git.eleith.com/api/packages/eleith/npm/"
   },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@earendil-works/* --external:typebox",
+    "prepack": "pnpm build",
+    "lint": "oxlint --deny-warnings --config ../../.oxlintrc.json src",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "devDependencies": {
+    "@eleith/pi-internal": "workspace:*"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./dist/index.js"
     ]
   }
 }

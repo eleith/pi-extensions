@@ -15,7 +15,7 @@ Use `/eleith:title-status toggle` to be unamazed.
 
 ## how to configure
 
-update `~/.pi/agent/eleith-extensions.json` with the following:
+update `~/.pi/agent/extensions/eleith.json` with the following:
 
 ```json
 { "commandPrefix": "personal" }
