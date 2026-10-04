@@ -48,7 +48,7 @@ async function invokeCommand(
   ctx: ExtensionCommandContext,
 ): Promise<void> {
   const action = args.trim().toLowerCase() || options.defaultAction;
-  if (!options.actions.includes(action)) {
+  if (action !== options.defaultAction && !options.actions.includes(action)) {
     ctx.ui.notify(`Usage: ${commandUsage(options)}`, "warning");
     return;
   }

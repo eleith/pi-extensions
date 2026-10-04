@@ -1,0 +1,72 @@
+when:
+  - event: push
+    branch: main
+    path:
+      include:
+        - extensions/context-window/**
+        - packages/internal/**
+        - .woodpecker/context-window.yml
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - tsconfig.json
+        - .oxlintrc.json
+        - .oxfmtrc.json
+        - .editorconfig
+        - .gitignore
+        - .changeset/config.json
+      on_empty: false
+  - event: pull_request
+    path:
+      include:
+        - extensions/context-window/**
+        - packages/internal/**
+        - .woodpecker/context-window.yml
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - tsconfig.json
+        - .oxlintrc.json
+        - .oxfmtrc.json
+        - .editorconfig
+        - .gitignore
+        - .changeset/config.json
+      on_empty: false
+
+workspace:
+  base: /workspace
+  path: src
+
+steps:
+  prepare:
+    image: node:26
+    environment:
+      COREPACK_HOME: /workspace/src/.corepack
+    commands:
+      - npm install --global corepack@latest
+      - corepack enable
+      - corepack prepare pnpm@11.2.2 --activate
+      - pnpm config set store-dir .pnpm-store
+      - pnpm install --frozen-lockfile
+
+  checks:
+    image: node:26
+    environment:
+      COREPACK_HOME: /workspace/src/.corepack
+      PI_OFFLINE: "1"
+    commands:
+      - npm install --global corepack@latest
+      - corepack enable
+      - pnpm exec oxfmt --check extensions/context-window packages/internal .woodpecker/context-window.yml package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .oxlintrc.json .oxfmtrc.json .editorconfig .gitignore .changeset/config.json
+      - pnpm --filter @eleith/pi-context-window --filter @eleith/pi-internal lint
+      - pnpm --filter @eleith/pi-context-window --filter @eleith/pi-internal check
+      - pnpm --filter @eleith/pi-context-window --filter @eleith/pi-internal test
+
+  build:
+    image: node:26
+    environment:
+      COREPACK_HOME: /workspace/src/.corepack
+    commands:
+      - npm install --global corepack@latest
+      - corepack enable
+      - pnpm --filter @eleith/pi-context-window build
