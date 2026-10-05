@@ -38,6 +38,11 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+  const sdk = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
+  return { ...sdk, createFindToolDefinition: vi.fn(sdk.createFindToolDefinition) };
+});
+
 const definitions = {
   read: createReadToolDefinition,
   write: createWriteToolDefinition,
@@ -421,9 +426,22 @@ it.each(["ls", "find"] as const)(
     const cwd = mkdtempSync(join(directory, "execute-"));
     writeFileSync(join(cwd, "one.txt"), "one");
     writeFileSync(join(cwd, "two.txt"), "two");
+    let original: ToolDefinition;
+    if (name === "find") {
+      const sdk = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
+        "@earendil-works/pi-coding-agent",
+      );
+      const nativeFind = sdk.createFindToolDefinition(cwd, {
+        operations: { exists: () => true, glob: () => ["one.txt"] },
+      });
+      vi.mocked(createFindToolDefinition).mockReturnValueOnce(nativeFind);
+      original = erased(nativeFind);
+    } else {
+      original = erased(createLsToolDefinition(cwd));
+    }
+    const execute = vi.spyOn(original, "execute");
     const { tool: captured } = capture(name, new RenderingState(), cwd);
     const tool = erased(captured);
-    const original = erased(definitions[name](cwd));
     const args = { path: ".", pattern: "one.txt", limit: 1 };
     const native = await original.execute(
       "native",
@@ -432,13 +450,12 @@ it.each(["ls", "find"] as const)(
       undefined,
       {} as Parameters<typeof original.execute>[4],
     );
-    const result = await tool.execute(
-      "wrapped",
-      args,
-      undefined,
-      undefined,
-      {} as Parameters<typeof tool.execute>[4],
-    );
+    const signal = new AbortController().signal;
+    const onUpdate = vi.fn();
+    const ctx = { cwd } as Parameters<typeof tool.execute>[4];
+    const result = await tool.execute("wrapped", args, signal, onUpdate, ctx);
+    if (name === "find")
+      expect(execute).toHaveBeenLastCalledWith("wrapped", args, signal, onUpdate, ctx);
     expect(result.content).toEqual(native.content);
     expect(result.details).toEqual({
       ...(native.details as object),
