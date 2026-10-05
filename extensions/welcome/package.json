@@ -20,9 +20,6 @@
     "CHANGELOG.md"
   ],
   "type": "module",
-  "publishConfig": {
-    "registry": "https://git.eleith.com/api/packages/eleith/npm/"
-  },
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@earendil-works/* --external:typebox",
     "prepack": "pnpm build",

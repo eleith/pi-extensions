@@ -33,6 +33,9 @@ when:
         - .changeset/config.json
       on_empty: false
 
+  - event: tag
+    ref: "refs/tags/@eleith/pi-context-window@*"
+
 workspace:
   base: /workspace
   path: src
@@ -70,3 +73,86 @@ steps:
       - npm install --global corepack@latest
       - corepack enable
       - pnpm --filter @eleith/pi-context-window build
+
+  check-version:
+    image: node:26
+    commands:
+      - |
+        set -eu
+        VERSION_FROM_TAG="$${CI_COMMIT_TAG#@eleith/pi-context-window@}"
+        VERSION_FROM_PKG="$$(node -p "require('./extensions/context-window/package.json').version")"
+
+        if [ "$${VERSION_FROM_TAG}" != "$${VERSION_FROM_PKG}" ]; then
+          echo "Version mismatch: Git tag version $${VERSION_FROM_TAG} does not match extensions/context-window/package.json version: $${VERSION_FROM_PKG}"
+          exit 1
+        fi
+        if [ "$${VERSION_FROM_PKG}" = "0.0.0" ]; then
+          echo "Refusing to publish @eleith/pi-context-window at placeholder version 0.0.0"
+          exit 1
+        fi
+    when:
+      - event: tag
+
+  publish:
+    image: node:26
+    environment:
+      COREPACK_HOME: /workspace/src/.corepack
+      NPM_CONFIG_USERCONFIG: /workspace/src/.cache/context-window-publish.npmrc
+      NPM_TOKEN:
+        from_secret: gitea_npm_token
+    commands:
+      - npm install --global corepack@latest
+      - corepack enable
+      - |
+        set -eu
+        test -n "$${NPM_TOKEN}"
+        VERSION="$$(node -p "require('./extensions/context-window/package.json').version")"
+        umask 077
+        mkdir -p .cache
+        trap 'rm -f "$${NPM_CONFIG_USERCONFIG}"' EXIT
+        printf '%s\n' '//git.eleith.com/api/packages/eleith.private/npm/:_authToken=$${NPM_TOKEN}' > "$${NPM_CONFIG_USERCONFIG}"
+
+        if npm view "@eleith/pi-context-window@$${VERSION}" version --json --registry=https://git.eleith.com/api/packages/eleith.private/npm/ > .cache/context-window-registry.json 2>/dev/null; then
+          echo "@eleith/pi-context-window@$${VERSION} is already published; skipping"
+          exit 0
+        fi
+        node -e 'const result = require("./.cache/context-window-registry.json"); if (result.error?.code !== "E404") throw new Error("Registry lookup failed; refusing to publish");'
+        pnpm --filter @eleith/pi-context-window publish --registry=https://git.eleith.com/api/packages/eleith.private/npm/ --no-git-checks
+    when:
+      - event: tag
+
+  notify-success:
+    image: deblan/woodpecker-email:3.2.0
+    settings:
+      dsn:
+        from_secret: woodpecker_email_dsn
+      from:
+        address:
+          from_secret: woodpecker_email_from_address
+        name:
+          from_secret: woodpecker_email_from_name
+      recipients:
+        from_secret: woodpecker_email_recipient
+      level: success
+      recipients_only: true
+    when:
+      - event: [push, tag]
+        status: [success]
+
+  notify-failure:
+    image: deblan/woodpecker-email:3.2.0
+    settings:
+      dsn:
+        from_secret: woodpecker_email_dsn
+      from:
+        address:
+          from_secret: woodpecker_email_from_address
+        name:
+          from_secret: woodpecker_email_from_name
+      recipients:
+        from_secret: woodpecker_email_recipient
+      level: failure
+      recipients_only: true
+    when:
+      - event: [push, tag]
+        status: [failure]
