@@ -1,4 +1,4 @@
-# @eleith/pi-title-status
+# @eleith/pi-extension-title-status
 
 ## 0.1.0
 

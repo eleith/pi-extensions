@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-progress",
+  "name": "@eleith/pi-extension-progress",
   "version": "0.1.0",
   "private": false,
   "description": "Terminal progress indicators for Pi, including tmux passthrough",

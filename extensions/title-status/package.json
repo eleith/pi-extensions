@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-title-status",
+  "name": "@eleith/pi-extension-title-status",
   "version": "0.1.0",
   "private": false,
   "description": "Session names and activity indicators in the Pi terminal title",

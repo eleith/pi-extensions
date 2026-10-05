@@ -1,4 +1,4 @@
-# @eleith/pi-welcome
+# @eleith/pi-extension-welcome
 
 ## 0.1.0
 

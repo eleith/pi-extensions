@@ -1,4 +1,4 @@
-# @eleith/pi-compact-editor-chrome
+# @eleith/pi-extension-compact-editor-chrome
 
 ## 0.1.0
 

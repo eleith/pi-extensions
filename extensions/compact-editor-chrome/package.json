@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-compact-editor-chrome",
+  "name": "@eleith/pi-extension-compact-editor-chrome",
   "version": "0.1.0",
   "private": false,
   "description": "Compact model, context, project, and Git status around the Pi editor",

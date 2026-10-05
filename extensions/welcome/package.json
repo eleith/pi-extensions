@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-welcome",
+  "name": "@eleith/pi-extension-welcome",
   "version": "0.1.0",
   "private": false,
   "description": "A tree and session overview when Pi starts",

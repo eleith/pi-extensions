@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-notifications",
+  "name": "@eleith/pi-extension-notifications",
   "version": "0.1.0",
   "private": false,
   "description": "Desktop and terminal notifications when Pi finishes a run",

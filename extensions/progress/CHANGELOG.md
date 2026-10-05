@@ -1,4 +1,4 @@
-# @eleith/pi-progress
+# @eleith/pi-extension-progress
 
 ## 0.1.0
 

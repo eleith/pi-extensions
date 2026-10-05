@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-tool-rendering",
+  "name": "@eleith/pi-extension-tool-rendering",
   "version": "0.1.0",
   "private": false,
   "description": "Consistent minimal frames for Pi's built-in tools",
