@@ -1,6 +1,6 @@
 {
   "name": "@eleith/pi-title-status",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "description": "Session names and activity indicators in the Pi terminal title",
   "keywords": [

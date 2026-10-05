@@ -1,6 +1,6 @@
 {
   "name": "@eleith/pi-welcome",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "description": "A tree and session overview when Pi starts",
   "keywords": [

@@ -1,6 +1,6 @@
 {
   "name": "@eleith/pi-notifications",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "description": "Desktop and terminal notifications when Pi finishes a run",
   "keywords": [

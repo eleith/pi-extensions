@@ -1,6 +1,6 @@
 {
   "name": "@eleith/pi-context-window",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "description": "Status and branch-persisted controls for Pi context windows",
   "keywords": [
