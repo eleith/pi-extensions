@@ -1,0 +1,45 @@
+{
+  "name": "@eleith/pi-welcome",
+  "version": "0.0.0",
+  "private": false,
+  "description": "A tree and session overview when Pi starts",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
+    "directory": "extensions/welcome"
+  },
+  "files": [
+    "dist/index.js",
+    "README.md",
+    "large-tree.svg",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "registry": "https://git.eleith.com/api/packages/eleith/npm/"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@earendil-works/* --external:typebox",
+    "prepack": "pnpm build",
+    "lint": "oxlint --deny-warnings --config ../../.oxlintrc.json src",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "devDependencies": {
+    "@eleith/pi-internal": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}

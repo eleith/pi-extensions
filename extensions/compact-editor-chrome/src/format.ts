@@ -2,36 +2,13 @@ import { basename } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import type { GitStatus, ThemeLike } from "./types.ts";
+import { styleThinking } from "@eleith/pi-internal/thinking";
+export { styleThinking } from "@eleith/pi-internal/thinking";
 
 const TOKEN_FORMAT = new Intl.NumberFormat("en-US", {
   notation: "compact",
   maximumFractionDigits: 0,
 });
-
-export function styleThinking(
-  theme: ThemeLike,
-  level: ExtensionContext["thinkingLevel"],
-  text: string,
-): string {
-  const color =
-    level === "low"
-      ? "success"
-      : level === "medium"
-        ? "accent"
-        : level === "high"
-          ? "warning"
-          : level === "xhigh"
-            ? "thinkingXhigh"
-            : level === "max"
-              ? "thinkingMax"
-              : level === "minimal"
-                ? "muted"
-                : "dim";
-  const styled = theme.fg(color, text);
-  return level === "off" || level === "minimal" || level === undefined
-    ? styled
-    : theme.bold(styled);
-}
 
 type ModelStatusContext = Pick<ExtensionContext, "model" | "thinkingLevel" | "getContextUsage">;
 

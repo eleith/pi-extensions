@@ -6,7 +6,8 @@
   "type": "module",
   "exports": {
     "./config": "./src/config.ts",
-    "./commands": "./src/commands.ts"
+    "./commands": "./src/commands.ts",
+    "./thinking": "./src/thinking.ts"
   },
   "scripts": {
     "lint": "oxlint --deny-warnings --config ../../.oxlintrc.json src",

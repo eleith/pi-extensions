@@ -69,6 +69,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/internal
 
+  extensions/welcome:
+    devDependencies:
+      '@eleith/pi-internal':
+        specifier: workspace:*
+        version: link:../../packages/internal
+
   packages/internal: {}
 
 packages:
