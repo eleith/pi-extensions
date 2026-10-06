@@ -50,7 +50,7 @@ async function load(
       return () => handlers.splice(handlers.indexOf(listener), 1);
     }),
     getCommands: vi.fn(() => existingCommands),
-    getSessionName: vi.fn(() => "chat"),
+    getSessionName: vi.fn<ExtensionAPI["getSessionName"]>(() => "chat"),
     registerCommand: vi.fn((_name: string, _command: Command) => {}),
   };
   const setTitle = vi.fn();
@@ -120,6 +120,73 @@ describe("title-status command and lifecycle", () => {
     title.emit("agent_settled");
     expect(title.setTitle).toHaveBeenLastCalledWith("π - chat");
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["chat", "", undefined])(
+    "looks up session name %s once across spinner ticks and hide/show",
+    async (name) => {
+      const title = await load();
+      title.pi.getSessionName.mockReturnValue(name);
+      title.emit("session_start");
+      vi.runOnlyPendingTimers();
+      title.emit("agent_start");
+      vi.advanceTimersByTime(30_000);
+      expect(title.setTitle).toHaveBeenCalledTimes(102);
+      expect(title.setTitle).toHaveBeenLastCalledWith(`◰ - ${name || "project"}`);
+      await title.command().handler("hide", title.ctx);
+      await title.command().handler("show", title.ctx);
+      title.emit("agent_settled");
+      expect(title.setTitle).toHaveBeenLastCalledWith(`π - ${name || "project"}`);
+      expect(title.pi.getSessionName).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("invalidates on rename but waits until the deferred render to look up the name", async () => {
+    const title = await load();
+    title.emit("session_start");
+    vi.runOnlyPendingTimers();
+    title.emit("agent_start");
+    title.emit("session_info_changed");
+    expect(title.pi.getSessionName).toHaveBeenCalledOnce();
+    title.pi.getSessionName.mockReturnValue("new\u0007\u001b\nname");
+    vi.advanceTimersByTime(0);
+    expect(title.setTitle).toHaveBeenLastCalledWith("◰ - new name");
+    vi.advanceTimersByTime(300);
+    expect(title.setTitle).toHaveBeenLastCalledWith("◳ - new name");
+    expect(title.pi.getSessionName).toHaveBeenCalledTimes(2);
+    title.pi.getSessionName.mockReturnValue("");
+    title.emit("session_info_changed");
+    vi.advanceTimersByTime(600);
+    expect(title.setTitle).toHaveBeenLastCalledWith("◱ - project");
+    expect(title.pi.getSessionName).toHaveBeenCalledTimes(3);
+  });
+
+  it("invalidates on session replacement, including when title status is hidden", async () => {
+    const title = await load();
+    title.emit("session_start");
+    vi.runOnlyPendingTimers();
+    await title.command().handler("hide", title.ctx);
+    title.pi.getSessionName.mockReturnValue("replacement");
+    title.emit("session_start");
+    expect(title.pi.getSessionName).toHaveBeenCalledOnce();
+    await title.command().handler("show", title.ctx);
+    expect(title.setTitle).toHaveBeenLastCalledWith("π - replacement");
+    expect(title.pi.getSessionName).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates hidden renames so showing the title uses the latest name", async () => {
+    const title = await load();
+    title.emit("session_start");
+    vi.runOnlyPendingTimers();
+    await title.command().handler("hide", title.ctx);
+    title.pi.getSessionName.mockReturnValue("renamed while hidden");
+    title.emit("session_info_changed");
+    expect(title.pi.getSessionName).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    await title.command().handler("show", title.ctx);
+    expect(title.setTitle).toHaveBeenLastCalledWith("π - renamed while hidden");
+    expect(title.pi.getSessionName).toHaveBeenCalledTimes(2);
   });
 
   it("toggles by default, preserves a working run across hide/show, and rejects extra arguments", async () => {
@@ -195,6 +262,7 @@ describe("title-status command and lifecycle", () => {
     title.emit("agent_settled");
     title.emit("session_shutdown");
     expect(title.setTitle).not.toHaveBeenCalled();
+    expect(title.pi.getSessionName).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 });

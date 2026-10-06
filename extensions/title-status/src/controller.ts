@@ -26,6 +26,7 @@ export class TitleController {
   private spinner: ReturnType<typeof setInterval> | undefined;
   private pendingRender: ReturnType<typeof setImmediate> | undefined;
   private frameIndex = 0;
+  private cachedSessionName: string | undefined;
 
   constructor(private readonly getSessionName: () => string | undefined) {}
 
@@ -54,12 +55,14 @@ export class TitleController {
   }
 
   sessionStarted(ctx: ExtensionContext): void {
+    this.cachedSessionName = undefined;
     this.working = false;
     this.stop();
     this.renderAfterPi(ctx);
   }
 
   sessionInfoChanged(ctx: ExtensionContext): void {
+    this.cachedSessionName = undefined;
     this.renderAfterPi(ctx);
   }
 
@@ -80,7 +83,8 @@ export class TitleController {
   }
 
   private sessionName(): string {
-    return safeLabel(this.getSessionName() ?? "");
+    this.cachedSessionName ??= safeLabel(this.getSessionName() ?? "");
+    return this.cachedSessionName;
   }
 
   private render(ctx: ExtensionContext): void {
