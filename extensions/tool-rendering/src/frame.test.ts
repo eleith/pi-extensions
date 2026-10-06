@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   builtinContext,
   frameComponent,
@@ -44,6 +44,65 @@ it("uses actual component width again after resize, with a 210-column cap", () =
     ),
   ).toBe(component);
   expect(stripTerminalSequences(component.render(80)[0])).toContain("write");
+});
+
+it("reuses painting and Text layout on unchanged transcript redraws", () => {
+  const painter = vi.fn((width: number) => frameTop("read", "success", theme, width));
+  const component = frameComponent({ lastComponent: undefined }, painter);
+  const setText = vi.spyOn(component, "setText");
+  const first = component.render(80);
+  for (let redraw = 0; redraw < 100; redraw++) expect(component.render(80)).toBe(first);
+  expect(painter).toHaveBeenCalledTimes(1);
+  expect(setText).toHaveBeenCalledTimes(1);
+});
+
+it("repaints on resize but only resets text when the painted output changes", () => {
+  const painter = vi.fn((_width: number) => "unchanged");
+  const component = frameComponent({ lastComponent: undefined }, painter);
+  const setText = vi.spyOn(component, "setText");
+  for (const width of [80, 80, 20, 20, 250, 300]) {
+    expect(visibleWidth(component.render(width)[0])).toBe(width);
+  }
+  expect(painter.mock.calls.map(([width]) => width)).toEqual([80, 20, 210]);
+  expect(setText).toHaveBeenCalledTimes(1);
+});
+
+it("rebuilds themed and mutable state on invalidate, and content on painter replacement", () => {
+  let color = "\x1b[36m";
+  let status = "pending";
+  const painter = vi.fn(() => `${color}${status}\x1b[39m`);
+  const component = frameComponent({ lastComponent: undefined }, painter);
+  expect(component.render(80)[0]).toContain("\x1b[36mpending");
+  color = "\x1b[31m";
+  status = "error";
+  component.invalidate();
+  const updated = component.render(80);
+  expect(updated[0]).toContain("\x1b[31merror");
+  expect(component.render(80)).toBe(updated);
+  expect(painter).toHaveBeenCalledTimes(2);
+
+  const replacement = vi.fn(() => "expanded output");
+  expect(frameComponent({ lastComponent: component }, replacement)).toBe(component);
+  expect(component.render(80)[0]).toContain("expanded output");
+  component.render(80);
+  expect(replacement).toHaveBeenCalledTimes(1);
+});
+
+it("caches painting failures until invalidated and recovers on the next paint", () => {
+  let failing = true;
+  const painter = vi.fn(() => {
+    if (failing) throw new Error("Malformed streamed arguments");
+    return "recovered";
+  });
+  const component = frameComponent({ lastComponent: undefined }, painter);
+  const fallback = component.render(80);
+  expect(fallback.join("\n")).toContain("could not be rendered");
+  expect(component.render(80)).toBe(fallback);
+  expect(painter).toHaveBeenCalledTimes(1);
+  failing = false;
+  component.invalidate();
+  expect(component.render(80)[0]).toContain("recovered");
+  expect(painter).toHaveBeenCalledTimes(2);
 });
 
 it("contains painter failures outside Pi's renderer callback guard", () => {

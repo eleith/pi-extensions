@@ -1,9 +1,10 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 
-/** Rebuild the frame at the actual render width, including after terminal resizes. */
 export class FramedText extends Text {
   private painter: (width: number) => string = () => "";
+  private paintedWidth: number | undefined;
+  private paintedText: string | undefined;
 
   constructor() {
     super("", 0, 0);
@@ -14,12 +15,27 @@ export class FramedText extends Text {
     this.invalidate();
   }
 
+  override invalidate(): void {
+    this.paintedWidth = undefined;
+    super.invalidate();
+  }
+
   override render(width: number): string[] {
-    try {
-      this.setText(this.painter(Math.max(1, Math.min(width, 210))));
-    } catch {
-      // Deferred painting runs outside Pi's guarded renderer callbacks.
-      this.setText("Tool output could not be rendered.");
+    const paintWidth = Math.max(1, Math.min(width, 210));
+    if (this.paintedWidth !== paintWidth) {
+      let text: string;
+      try {
+        text = this.painter(paintWidth);
+      } catch {
+        // Deferred painting runs outside Pi's guarded renderer callbacks.
+        text = "Tool output could not be rendered.";
+      }
+      // Text.setText always clears its layout cache.
+      if (text !== this.paintedText) {
+        this.setText(text);
+        this.paintedText = text;
+      }
+      this.paintedWidth = paintWidth;
     }
     return super.render(width);
   }

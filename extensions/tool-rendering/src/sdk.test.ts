@@ -133,6 +133,42 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
       directory,
     );
     expect(() => malformedBash.render(80)).not.toThrow();
+    const readRow = new ToolExecutionComponent(
+      "read",
+      "cached-read",
+      { path: "before.txt" },
+      {},
+      session.extensionRunner.getToolDefinition("read"),
+      { requestRender } as never,
+      directory,
+    );
+    const readResult = {
+      content: [
+        {
+          type: "text" as const,
+          text: Array.from({ length: 12 }, (_, i) => `line-${i}`).join("\n"),
+        },
+      ],
+      details: undefined,
+      isError: false,
+    };
+    readRow.updateResult(readResult);
+    const collapsed = readRow.render(80).join("\n");
+    expect(collapsed).toContain("before.txt");
+    expect(collapsed).not.toContain("line-11");
+    expect(readRow.render(80).join("\n")).toBe(collapsed);
+    readRow.setExpanded(true);
+    expect(readRow.render(80).join("\n")).toContain("line-11");
+    readRow.updateArgs({ path: "after.txt" });
+    expect(readRow.render(80).join("\n")).toContain("after.txt");
+    readRow.updateResult({ ...readResult, isError: true });
+    expect(readRow.render(80).join("\n")).toContain("✗ error");
+    const dark = readRow.render(80).join("\n");
+    initTheme("light", false);
+    readRow.invalidate();
+    expect(readRow.render(80).join("\n")).not.toBe(dark);
+    initTheme("dark", false);
+
     vi.useFakeTimers();
     vi.setSystemTime(1000);
     const definition = session.extensionRunner.getToolDefinition("bash");
@@ -153,6 +189,10 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
       true,
     );
     expect(vi.getTimerCount()).toBe(1);
+    expect(row.render(80).join("\n")).toContain("0.0s");
+    vi.advanceTimersByTime(1000);
+    expect(row.render(80).join("\n")).toContain("1.0s");
+    expect(row.render(80).join("\n")).toContain("1.0s");
     await session.prompt("/eleith:tool-rendering hide");
     expect(vi.getTimerCount()).toBe(0);
     row.invalidate();
