@@ -26,6 +26,10 @@ function snapshotFixture() {
     model: { name: "智🚀 e\u0301 GPT-very-long-model", contextWindow: 128_000 },
     thinkingLevel: "high",
     getContextUsage,
+    sessionManager: {
+      getSessionId: vi.fn(() => "session"),
+      getLeafId: vi.fn((): string | null => "leaf"),
+    },
   } as unknown as ExtensionContext;
   const statuses = new Map([
     ["one", "\x1b[31m准备🚀\x1b[0m"],
@@ -113,6 +117,34 @@ for (const ansi of [false, true]) {
 }
 
 describe("PromptStatusWidget top layout", () => {
+  it("reuses usage across redraws, resizing, thinking changes, and theme invalidation", () => {
+    const f = widgetFixture("top", true);
+    const first = f.widget.render(120);
+    for (let redraw = 0; redraw < 100; redraw++) expect(f.widget.render(120)).toEqual(first);
+    expect(visibleWidth(f.widget.render(40)[0]!)).toBe(40);
+    f.getSnapshot.mockReturnValue({
+      ...f.snapshot,
+      ctx: { ...f.ctx, thinkingLevel: "off" },
+    });
+    f.widget.invalidate();
+    f.fg.mockImplementation((_color, text) => `\x1b[31m${text}\x1b[39m`);
+    const updated = f.widget.render(120)[0]!;
+    expect(stripTerminalSequences(updated)).toContain("Thinking: Off");
+    expect(updated).toContain("\x1b[31m");
+    expect(f.getContextUsage).toHaveBeenCalledOnce();
+  });
+
+  it("renders updated usage and its color after the leaf changes", () => {
+    const f = widgetFixture("top");
+    f.widget.render(120);
+    vi.mocked(f.ctx.sessionManager.getLeafId).mockReturnValue("next-leaf");
+    f.getContextUsage.mockReturnValue({ tokens: 115_000, contextWindow: 128_000, percent: 90 });
+    expect(f.widget.render(120)[0]).toContain("Context: 115k/128k");
+    expect(f.fg).toHaveBeenCalledWith("error", "115k/128k");
+    f.widget.render(120);
+    expect(f.getContextUsage).toHaveBeenCalledTimes(2);
+  });
+
   it("right-aligns the full Unicode status with padding based on visible, not ANSI, width", () => {
     const f = widgetFixture("top", true);
     const line = f.widget.render(120)[0]!;

@@ -25,6 +25,10 @@ function uiFixture() {
     model: undefined,
     thinkingLevel: "off",
     getContextUsage: vi.fn(() => undefined),
+    sessionManager: {
+      getSessionId: vi.fn(() => "session"),
+      getLeafId: vi.fn(() => null),
+    },
   } as unknown as ExtensionContext;
   return { ctx, ui, setWidget, setFooter, setWorkingVisible };
 }

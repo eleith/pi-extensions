@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { bottomLeftStatus, topRightStatus } from "./format.ts";
+import { ContextUsageCache } from "./context-usage.ts";
 import type { ChromeSnapshot } from "./types.ts";
 
 export const TOP_WIDGET = "eleith-prompt-status-top";
@@ -18,6 +19,8 @@ export class EmptyFooter implements Component {
 }
 
 export class PromptStatusWidget implements Component {
+  private readonly usage = new ContextUsageCache();
+
   constructor(
     private readonly getSnapshot: () => ChromeSnapshot | undefined,
     private readonly onRender: () => void,
@@ -33,7 +36,16 @@ export class PromptStatusWidget implements Component {
     const separator = this.theme.fg("muted", "›");
     if (this.placement === "top") {
       const fitted = truncateToWidth(
-        topRightStatus(snapshot.ctx, this.theme, separator, width),
+        topRightStatus(
+          {
+            model: snapshot.ctx.model,
+            thinkingLevel: snapshot.ctx.thinkingLevel,
+            getContextUsage: () => this.usage.get(snapshot.ctx),
+          },
+          this.theme,
+          separator,
+          width,
+        ),
         width,
         "…",
       );
