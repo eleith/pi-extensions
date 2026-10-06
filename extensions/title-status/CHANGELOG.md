@@ -1,5 +1,11 @@
 # @eleith-pi/title-status
 
+## 0.1.1
+
+### Patch Changes
+
+- Enable automated npm releases through GitHub trusted publishing.
+
 ## 0.1.0
 
 ### Minor Changes
