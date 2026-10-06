@@ -1,5 +1,11 @@
 # @eleith-pi/compact-editor-chrome
 
+## 0.1.2
+
+### Patch Changes
+
+- d6ebf71: Reuse context usage on unchanged editor redraws, refreshing when the session, branch leaf, model, or context window changes. Keep virtual-model usage live and theme/width formatting independent.
+
 ## 0.1.1
 
 ### Patch Changes

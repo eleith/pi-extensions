@@ -1,5 +1,11 @@
 # @eleith-pi/title-status
 
+## 0.1.3
+
+### Patch Changes
+
+- a1d18f1: Cache the sanitized session name between session/name changes so spinner ticks do not repeatedly scan session history, including for unnamed sessions.
+
 ## 0.1.2
 
 ### Patch Changes

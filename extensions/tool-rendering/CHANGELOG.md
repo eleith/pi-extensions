@@ -1,5 +1,11 @@
 # @eleith-pi/tool-rendering
 
+## 0.1.2
+
+### Patch Changes
+
+- 5d8d277: Cache unchanged tool frames and preserve Pi's text-layout cache on transcript redraws, while rebuilding on resize, content/state updates, and theme changes.
+
 ## 0.1.1
 
 ### Patch Changes
