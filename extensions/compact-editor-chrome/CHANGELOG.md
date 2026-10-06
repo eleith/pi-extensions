@@ -1,5 +1,11 @@
 # @eleith-pi/compact-editor-chrome
 
+## 0.1.1
+
+### Patch Changes
+
+- Document installation from npm.
+
 ## 0.1.0
 
 ### Minor Changes

@@ -8,6 +8,12 @@ my header card for when a new PI session starts.
 
 i like 🌳. you like 🍎. we like 🥧.
 
+## how to install
+
+```sh
+pi install npm:@eleith-pi/welcome
+```
+
 ## how to use
 
 just spin up a fresh pi instance.

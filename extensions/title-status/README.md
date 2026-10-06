@@ -7,6 +7,12 @@ llm is working
 
 when running multiple LLMs, it's nice to quickly observe which ones are running
 
+## how to install
+
+```sh
+pi install npm:@eleith-pi/title-status
+```
+
 ## how to use
 
 make an llm call and be amazed.

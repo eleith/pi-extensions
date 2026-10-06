@@ -8,6 +8,12 @@ so i can regain focus if i switched away from my terminal.
 
 attempts to use `notify-send` with a fallback to OSC 777.
 
+## how to install
+
+```sh
+pi install npm:@eleith-pi/notifications
+```
+
 ## how to use
 
 send in a prompt and watch the magic,

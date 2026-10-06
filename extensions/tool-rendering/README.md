@@ -6,6 +6,12 @@ this gives Pi's built-in `bash`, `read`, `grep`, `ls`, `find`, `write`, and `edi
 
 because
 
+## how to install
+
+```sh
+pi install npm:@eleith-pi/tool-rendering
+```
+
 ## how to use
 
 make a tool call and be impressed.

@@ -1,5 +1,11 @@
 # @eleith-pi/title-status
 
+## 0.1.2
+
+### Patch Changes
+
+- Document installation from npm.
+
 ## 0.1.1
 
 ### Patch Changes

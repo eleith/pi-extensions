@@ -7,6 +7,12 @@ and extended (~1M) tokens
 
 when you want to avoid compaction and you think 1.5x token cost is worth it...
 
+## how to install
+
+```sh
+pi install npm:@eleith-pi/context-window
+```
+
 ## how to use
 
 run `/eleith:context` to see the state of your context
