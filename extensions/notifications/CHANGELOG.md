@@ -1,4 +1,4 @@
-# @eleith/pi-extension-notifications
+# @eleith-pi/notifications
 
 ## 0.1.0
 

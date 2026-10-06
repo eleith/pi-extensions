@@ -1,4 +1,4 @@
-# @eleith/pi-extension-context-window
+# @eleith-pi/context-window
 
 ## 0.1.0
 

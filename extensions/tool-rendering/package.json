@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-extension-tool-rendering",
+  "name": "@eleith-pi/tool-rendering",
   "version": "0.1.0",
   "private": false,
   "description": "Consistent minimal frames for Pi's built-in tools",
@@ -9,7 +9,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
+    "url": "git+https://github.com/eleith/pi-extensions.git",
     "directory": "extensions/tool-rendering"
   },
   "files": [

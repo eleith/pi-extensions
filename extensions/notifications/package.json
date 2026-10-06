@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-extension-notifications",
+  "name": "@eleith-pi/notifications",
   "version": "0.1.0",
   "private": false,
   "description": "Desktop and terminal notifications when Pi finishes a run",
@@ -9,7 +9,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
+    "url": "git+https://github.com/eleith/pi-extensions.git",
     "directory": "extensions/notifications"
   },
   "files": [

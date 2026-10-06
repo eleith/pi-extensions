@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-extension-title-status",
+  "name": "@eleith-pi/title-status",
   "version": "0.1.0",
   "private": false,
   "description": "Session names and activity indicators in the Pi terminal title",
@@ -9,7 +9,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
+    "url": "git+https://github.com/eleith/pi-extensions.git",
     "directory": "extensions/title-status"
   },
   "files": [

@@ -1,4 +1,4 @@
-# @eleith/pi-extension-tool-rendering
+# @eleith-pi/tool-rendering
 
 ## 0.1.0
 

@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-extension-compact-editor-chrome",
+  "name": "@eleith-pi/compact-editor-chrome",
   "version": "0.1.0",
   "private": false,
   "description": "Compact model, context, project, and Git status around the Pi editor",
@@ -9,7 +9,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
+    "url": "git+https://github.com/eleith/pi-extensions.git",
     "directory": "extensions/compact-editor-chrome"
   },
   "files": [

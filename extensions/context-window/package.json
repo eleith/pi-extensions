@@ -1,5 +1,5 @@
 {
-  "name": "@eleith/pi-extension-context-window",
+  "name": "@eleith-pi/context-window",
   "version": "0.1.0",
   "private": false,
   "description": "Status and branch-persisted controls for Pi context windows",
@@ -9,7 +9,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@git.eleith.com/eleith/pi-extensions.git",
+    "url": "git+https://github.com/eleith/pi-extensions.git",
     "directory": "extensions/context-window"
   },
   "files": [
