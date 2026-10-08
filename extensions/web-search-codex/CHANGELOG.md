@@ -1,5 +1,11 @@
 # @eleith-pi/web-search-codex
 
+## 0.1.2
+
+### Patch Changes
+
+- Restore wildcard ranges for host-provided Pi peer dependencies, following Pi's packaging guidance. Keep the minimum Pi requirement documented rather than constraining the host's dependencies.
+
 ## 0.1.1
 
 ### Patch Changes
