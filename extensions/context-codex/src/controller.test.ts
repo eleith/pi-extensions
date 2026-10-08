@@ -145,7 +145,7 @@ function fixture(catalog = model()) {
       state.branch.push(entry(data, customType));
     }),
   } satisfies ContextAPI;
-  const controller = new ContextController(api, "personal:context");
+  const controller = new ContextController(api, "personal:context-codex");
   return {
     catalog,
     state,
@@ -794,7 +794,7 @@ describe("ContextController", () => {
     const f = fixture();
     await f.controller.handle("extend", f.ctx);
     f.controller.shutdown();
-    const controller = new ContextController(f.api, "personal:context");
+    const controller = new ContextController(f.api, "personal:context-codex");
     await controller.restore(f.ctx);
     expect(f.state.current?.contextWindow).toBe(922_000);
     await controller.handle("restore", f.ctx);
@@ -803,12 +803,19 @@ describe("ContextController", () => {
     expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
   });
 
-  it.each([300_000, 1_000_000])(
+  it.each([300_000, 922_000, 1_000_000])(
     "honors catalog override %s rather than a guessed default",
     async (window) => {
       const f = fixture({ ...model(), contextWindow: window });
       await f.controller.handle("extend", f.ctx);
       expect(f.state.current?.contextWindow).toBe(Math.max(window, 922_000));
+      if (window >= 922_000) {
+        expect(f.api.setModel).not.toHaveBeenCalled();
+        expect(f.notify).toHaveBeenLastCalledWith(
+          `Using catalog context: ${window.toLocaleString("en-US")} tokens. No extension is needed.`,
+          "info",
+        );
+      }
       await f.controller.handle("restore", f.ctx);
       expect(f.state.current?.contextWindow).toBe(window);
       if (window >= 922_000) {
@@ -820,6 +827,43 @@ describe("ContextController", () => {
       }
     },
   );
+
+  it.each(["gpt-6.2-sol", "gpt-6.1-astra", "gpt-7-sol"])(
+    "does not guess an extended limit or replay saved preferences for %s",
+    async (id) => {
+      const f = fixture(model(id));
+      const original = structuredClone(f.catalog);
+      f.state.branch = [entry(preference(true, id))];
+      await f.controller.restore(f.ctx);
+      await f.controller.handle("extend", f.ctx);
+      await f.controller.handle("restore", f.ctx);
+      expect(f.notify).toHaveBeenLastCalledWith(
+        `No verified extended context limit for openai-codex/${id}. Only supported Codex models can be changed.`,
+        "warning",
+      );
+      await f.controller.handle("", f.ctx);
+      expect(f.notify).toHaveBeenLastCalledWith(
+        expect.stringMatching(/Extended +not verified/),
+        "info",
+      );
+      expect(f.state.current).toBe(f.catalog);
+      expect(f.catalog).toEqual(original);
+      expect(f.api.setModel).not.toHaveBeenCalled();
+      expect(f.api.appendEntry).not.toHaveBeenCalled();
+      expect(f.confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not extend a known ID through a non-Codex API", async () => {
+    const f = fixture({ ...model(), api: "openai-responses" });
+    await f.controller.handle("extend", f.ctx);
+    expect(f.api.setModel).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("No verified extended context limit"),
+      "warning",
+    );
+  });
 
   it.each([
     undefined,

@@ -1,3 +1,4 @@
+// Keep the transcript identifier stable so existing context-window branch choices still replay.
 export const CONTEXT_ENTRY = "eleith-context";
 
 export interface ContextPreference {

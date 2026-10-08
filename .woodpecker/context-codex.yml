@@ -3,9 +3,9 @@ when:
     branch: main
     path:
       include:
-        - extensions/context-window/**
+        - extensions/context-codex/**
         - packages/internal/**
-        - .woodpecker/context-window.yml
+        - .woodpecker/context-codex.yml
         - package.json
         - pnpm-lock.yaml
         - pnpm-workspace.yaml
@@ -19,9 +19,9 @@ when:
   - event: pull_request
     path:
       include:
-        - extensions/context-window/**
+        - extensions/context-codex/**
         - packages/internal/**
-        - .woodpecker/context-window.yml
+        - .woodpecker/context-codex.yml
         - package.json
         - pnpm-lock.yaml
         - pnpm-workspace.yaml
@@ -34,7 +34,7 @@ when:
       on_empty: false
 
   - event: tag
-    ref: "refs/tags/@eleith-pi/context-window@*"
+    ref: "refs/tags/@eleith-pi/context-codex@*"
 
 workspace:
   base: /workspace
@@ -60,10 +60,10 @@ steps:
     commands:
       - npm install --global corepack@latest
       - corepack enable
-      - pnpm exec oxfmt --check extensions/context-window packages/internal .woodpecker/context-window.yml package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .oxlintrc.json .oxfmtrc.json .editorconfig .gitignore .changeset/config.json
-      - pnpm --filter @eleith-pi/context-window --filter @eleith/pi-internal lint
-      - pnpm --filter @eleith-pi/context-window --filter @eleith/pi-internal check
-      - pnpm --filter @eleith-pi/context-window --filter @eleith/pi-internal test
+      - pnpm exec oxfmt --check extensions/context-codex packages/internal .woodpecker/context-codex.yml package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .oxlintrc.json .oxfmtrc.json .editorconfig .gitignore .changeset/config.json
+      - pnpm --filter @eleith-pi/context-codex --filter @eleith/pi-internal lint
+      - pnpm --filter @eleith-pi/context-codex --filter @eleith/pi-internal check
+      - pnpm --filter @eleith-pi/context-codex --filter @eleith/pi-internal test
 
   build:
     image: node:26
@@ -72,22 +72,22 @@ steps:
     commands:
       - npm install --global corepack@latest
       - corepack enable
-      - pnpm --filter @eleith-pi/context-window build
+      - pnpm --filter @eleith-pi/context-codex build
 
   check-version:
     image: node:26
     commands:
       - |
         set -eu
-        VERSION_FROM_TAG="$${CI_COMMIT_TAG#@eleith-pi/context-window@}"
-        VERSION_FROM_PKG="$$(node -p "require('./extensions/context-window/package.json').version")"
+        VERSION_FROM_TAG="$${CI_COMMIT_TAG#@eleith-pi/context-codex@}"
+        VERSION_FROM_PKG="$$(node -p "require('./extensions/context-codex/package.json').version")"
 
         if [ "$${VERSION_FROM_TAG}" != "$${VERSION_FROM_PKG}" ]; then
-          echo "Version mismatch: Git tag version $${VERSION_FROM_TAG} does not match extensions/context-window/package.json version: $${VERSION_FROM_PKG}"
+          echo "Version mismatch: Git tag version $${VERSION_FROM_TAG} does not match extensions/context-codex/package.json version: $${VERSION_FROM_PKG}"
           exit 1
         fi
         if [ "$${VERSION_FROM_PKG}" = "0.0.0" ]; then
-          echo "Refusing to publish @eleith-pi/context-window at placeholder version 0.0.0"
+          echo "Refusing to publish @eleith-pi/context-codex at placeholder version 0.0.0"
           exit 1
         fi
     when:
@@ -97,7 +97,7 @@ steps:
     image: node:26
     environment:
       COREPACK_HOME: /workspace/src/.corepack
-      NPM_CONFIG_USERCONFIG: /workspace/src/.cache/context-window-publish.npmrc
+      NPM_CONFIG_USERCONFIG: /workspace/src/.cache/context-codex-publish.npmrc
       NPM_TOKEN:
         from_secret: gitea_npm_token
     commands:
@@ -106,18 +106,18 @@ steps:
       - |
         set -eu
         test -n "$${NPM_TOKEN}"
-        VERSION="$$(node -p "require('./extensions/context-window/package.json').version")"
+        VERSION="$$(node -p "require('./extensions/context-codex/package.json').version")"
         umask 077
         mkdir -p .cache
         trap 'rm -f "$${NPM_CONFIG_USERCONFIG}"' EXIT
         printf '%s\n' '//git.eleith.com/api/packages/eleith.private/npm/:_authToken=$${NPM_TOKEN}' > "$${NPM_CONFIG_USERCONFIG}"
 
-        if npm view "@eleith-pi/context-window@$${VERSION}" version --json --registry=https://git.eleith.com/api/packages/eleith.private/npm/ > .cache/context-window-registry.json 2>/dev/null; then
-          echo "@eleith-pi/context-window@$${VERSION} is already published; skipping"
+        if npm view "@eleith-pi/context-codex@$${VERSION}" version --json --registry=https://git.eleith.com/api/packages/eleith.private/npm/ > .cache/context-codex-registry.json 2>/dev/null; then
+          echo "@eleith-pi/context-codex@$${VERSION} is already published; skipping"
           exit 0
         fi
-        node -e 'const result = require("./.cache/context-window-registry.json"); if (result.error?.code !== "E404") throw new Error("Registry lookup failed; refusing to publish");'
-        pnpm --filter @eleith-pi/context-window publish --registry=https://git.eleith.com/api/packages/eleith.private/npm/ --no-git-checks
+        node -e 'const result = require("./.cache/context-codex-registry.json"); if (result.error?.code !== "E404") throw new Error("Registry lookup failed; refusing to publish");'
+        pnpm --filter @eleith-pi/context-codex publish --registry=https://git.eleith.com/api/packages/eleith.private/npm/ --no-git-checks
     when:
       - event: tag
 

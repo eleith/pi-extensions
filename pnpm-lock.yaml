@@ -45,7 +45,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/internal
 
-  extensions/context-window:
+  extensions/context-codex:
     devDependencies:
       '@eleith/pi-internal':
         specifier: workspace:*

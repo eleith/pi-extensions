@@ -119,11 +119,13 @@ export class ContextController {
     const current = ctx.model;
     const profile = contextProfile(current);
     if (!current || !profile) {
-      if (command)
+      if (command) {
+        const selected = current ? modelKey(current) : "the selected model";
         ctx.ui.notify(
-          "Extended context is configured for Codex GPT-6 Sol and Astra only.",
+          `No verified extended context limit for ${selected}. Only supported Codex models can be changed.`,
           "warning",
         );
+      }
       return;
     }
     const standardWindow = baseline(ctx, current);
@@ -160,15 +162,17 @@ export class ContextController {
       if (!this.live(revision)) return;
       if (command) {
         this.remember(model, extended);
-        ctx.ui.notify(
-          `Context ${extended ? "extended" : "restored"}: ${tokens(target)} tokens.` +
-            (extended
-              ? " Larger requests can use more allowance; the server's limit still applies."
-              : standardWindow >= profile.extendedWindow
-                ? " Already at the catalog baseline; no smaller default is known."
-                : ""),
-          "info",
-        );
+        let message = `Context ${extended ? "extended" : "restored"}: ${tokens(target)} tokens.`;
+        if (standardWindow >= profile.extendedWindow) {
+          if (extended) {
+            message = `Using catalog context: ${tokens(target)} tokens. No extension is needed.`;
+          } else {
+            message += " Already at the catalog baseline; no smaller default is known.";
+          }
+        } else if (extended) {
+          message += " Larger requests can use more allowance; the server's limit still applies.";
+        }
+        ctx.ui.notify(message, "info");
       }
     } catch {
       if (this.live(revision)) this.uncertain(ctx);

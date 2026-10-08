@@ -14,6 +14,12 @@ function preference(
 const enabled = { provider: "openai-codex", modelId: "gpt-6-sol", extended: true };
 
 describe("active branch preferences", () => {
+  it("preserves literal branch entries written by context-window before the rename", () => {
+    const legacyEntry = preference(enabled, "legacy", null, "eleith-context");
+    expect(CONTEXT_ENTRY).toBe("eleith-context");
+    expect(readPreferences([legacyEntry])).toEqual(new Map([["openai-codex/gpt-6-sol", true]]));
+  });
+
   it("returns an empty map for an empty branch", () => {
     expect(readPreferences([])).toEqual(new Map());
   });

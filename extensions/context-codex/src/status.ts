@@ -90,7 +90,7 @@ export function formatContextStatus(status: ContextStatus, now = Date.now()): st
   const { model, usage, standardWindow, extendedWindow, branch, desiredExtended, replayPaused } =
     status;
   const lines = [
-    `context · ${modelKey(model)}`,
+    `context-codex · ${modelKey(model)}`,
     "",
     "  window",
     row(
@@ -103,7 +103,7 @@ export function formatContextStatus(status: ContextStatus, now = Date.now()): st
   if (standardWindow === undefined) {
     lines.push(row("Baseline", "unknown; reselect a catalog model"));
   } else if (extendedWindow === standardWindow) {
-    lines.push(row("Baseline", "catalog; no smaller default known"));
+    lines.push(row("Baseline", "catalog already provides this window; no extension needed"));
   }
 
   if (desiredExtended !== undefined) {
@@ -115,7 +115,7 @@ export function formatContextStatus(status: ContextStatus, now = Date.now()): st
   }
 
   const extendedLabel =
-    extendedWindow === undefined ? "not configured" : `${tokens(extendedWindow)} (local window)`;
+    extendedWindow === undefined ? "not verified" : `${tokens(extendedWindow)} (local window)`;
   lines.push(row("Extended", extendedLabel));
 
   const compactions = branch.filter((entry) => entry.type === "compaction");

@@ -10,13 +10,13 @@ import {
   type ExtensionContext,
   type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
-import contextWindow from "./index.ts";
+import contextCodex from "./index.ts";
 
 const directory = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const directory = mkdtempSync(join(tmpdir(), "context-sdk-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "context-codex-sdk-test-"));
   vi.stubEnv("PI_CODING_AGENT_DIR", directory);
   vi.stubEnv("PI_OFFLINE", "1");
   return directory;
@@ -48,7 +48,7 @@ async function fixture(window = 272_000) {
     throw new Error("Provider turns forbidden");
   });
   runtime.registerProvider("openai-codex", {
-    api: "context-sdk-test",
+    api: "openai-codex-responses",
     baseUrl: "https://must-not-connect.invalid",
     apiKey: "disposable-not-a-real-key",
     models: ["gpt-6-sol", "external"].map((id) => ({
@@ -86,7 +86,7 @@ async function fixture(window = 272_000) {
     noThemes: true,
     noContextFiles: true,
     extensionFactories: [
-      contextWindow,
+      contextCodex,
       (pi) => {
         pi.on("model_select", modelSelect);
         pi.on("session_start", (_event, ctx) => {
@@ -151,7 +151,7 @@ it.each([272_000, 300_000, 1_000_000])(
     const original = structuredClone(f.catalog);
     try {
       const leaf = f.manager.getLeafId();
-      await f.session.prompt("/eleith:context extend");
+      await f.session.prompt("/eleith:context-codex extend");
       const extended = f.session.model!;
       expect(extended.contextWindow).toBe(Math.max(window, 922_000));
       if (window < 922_000) {
@@ -165,7 +165,7 @@ it.each([272_000, 300_000, 1_000_000])(
       await f.session.reload();
       expect(f.session.model?.contextWindow).toBe(Math.max(window, 922_000));
       expect(f.registry.find("openai-codex", "gpt-6-sol")?.contextWindow).toBe(window);
-      await f.session.prompt("/eleith:context restore");
+      await f.session.prompt("/eleith:context-codex restore");
       expect(f.session.model?.contextWindow).toBe(window);
       expect(extended.contextWindow).toBe(Math.max(window, 922_000));
       expect(f.catalog).toEqual(original);
@@ -211,7 +211,7 @@ it.each(["rename", "external"])(
       });
     const selection = vi.spyOn(f.session, "setModel");
     try {
-      const request = f.session.prompt("/eleith:context extend");
+      const request = f.session.prompt("/eleith:context-codex extend");
       await started;
       const submitted = selection.mock.calls[0][0];
       const originalSubmitted = structuredClone(submitted);
@@ -238,7 +238,7 @@ it.each(["rename", "external"])(
       expect(thinkingWrites).not.toHaveBeenCalled();
       expect(f.session.thinkingLevel).toBe(thinking);
       // Only an explicit context-changing command resumes work.
-      await f.session.prompt("/eleith:context restore");
+      await f.session.prompt("/eleith:context-codex restore");
       expect(f.session.model?.contextWindow).toBe(272_000);
       expect(f.preferences()).toEqual([
         { provider: "openai-codex", modelId: "gpt-6-sol", extended: false },
@@ -258,14 +258,14 @@ it.each(["missing", "endpoint"])(
   async (reason) => {
     const f = await fixture();
     try {
-      await f.session.prompt("/eleith:context extend");
+      await f.session.prompt("/eleith:context-codex extend");
       const lookup = vi
         .spyOn(f.registry, "find")
         .mockReturnValue(
           reason === "missing" ? undefined : { ...f.catalog, baseUrl: "https://different.invalid" },
         );
       const select = vi.spyOn(f.session, "setModel");
-      await f.session.prompt("/eleith:context restore");
+      await f.session.prompt("/eleith:context-codex restore");
       expect(select).not.toHaveBeenCalled();
       expect(f.session.model?.contextWindow).toBe(922_000);
       expect(f.confirm).not.toHaveBeenCalled();

@@ -83,7 +83,7 @@ describe("context status windows", () => {
     };
     const original = structuredClone(current);
     const report = formatContextStatus(current, NOW);
-    expect(report).toContain("context · openai-codex/gpt-6-sol");
+    expect(report).toContain("context-codex · openai-codex/gpt-6-sol");
     expect(report).toMatch(/^    Usage +12k \/ 922k$/m);
     expect(report).toMatch(/^    Standard +272k$/m);
     expect(report).toMatch(/^    Extended +922k \(local window\)$/m);
@@ -93,7 +93,7 @@ describe("context status windows", () => {
   it("shows unknown usage with the model window when usage is unavailable", () => {
     const report = formatContextStatus(status, NOW);
     expect(report).toMatch(/^    Usage +unknown \/ 272k$/m);
-    expect(report).toMatch(/^    Extended +not configured$/m);
+    expect(report).toMatch(/^    Extended +not verified$/m);
   });
 
   it.each([null, -1, NaN, Infinity])("does not turn invalid token usage %s into zero", (tokens) => {
@@ -125,7 +125,7 @@ describe("catalog baseline and desired state", () => {
       { ...status, standardWindow: 1_000_000, extendedWindow: 1_000_000 },
       NOW,
     );
-    expect(report).toContain("catalog; no smaller default known");
+    expect(report).toContain("catalog already provides this window; no extension needed");
   });
 
   it.each([true, false])(

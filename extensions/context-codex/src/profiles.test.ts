@@ -43,9 +43,25 @@ describe("context profiles", () => {
     ["gpt-6-sol", "openai"],
     ["gpt-6-sol", "other"],
     ["gpt-6", "openai-codex"],
+    ["gpt-6.2-sol", "openai-codex"],
+    ["gpt-6.1-astra", "openai-codex"],
+    ["gpt-7-sol", "openai-codex"],
+    ["gpt-6-sol-2026-10-08", "openai-codex"],
     ["GPT-6-SOL", "openai-codex"],
   ])("has no profile for %s at %s", (id, provider) => {
     expect(contextProfile(model(id, provider))).toBeUndefined();
+  });
+
+  it("shares immutable verified Sol metadata without matching future model names", () => {
+    const profile = contextProfile(model("gpt-6-sol"));
+    expect(profile).toBe(contextProfile(model("gpt-6.1-sol")));
+    expect(Object.isFrozen(profile)).toBe(true);
+    expect(Object.isFrozen(contextProfile(model("gpt-6-astra")))).toBe(true);
+    expect(contextProfile(model("gpt-6.2-sol"))).toBeUndefined();
+  });
+
+  it("requires the native Codex API even when the provider and ID match", () => {
+    expect(contextProfile({ ...model("gpt-6-sol"), api: "openai-responses" })).toBeUndefined();
   });
 
   it("has no profile without a selected model", () => {
