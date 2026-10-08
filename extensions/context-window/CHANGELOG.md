@@ -1,5 +1,11 @@
 # @eleith-pi/context-window
 
+## 0.1.2
+
+### Patch Changes
+
+- Restore from configured model limits after reload and report interruptions without mutation-based recovery. Restore explicitly before removing the extension.
+
 ## 0.1.1
 
 ### Patch Changes
