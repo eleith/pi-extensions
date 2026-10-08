@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync, globSync } from "node:fs";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { afterAll, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import {
 import {
   createAgentSession,
   createBashToolDefinition,
+  createFindToolDefinition,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -357,15 +358,25 @@ it("leaves new ls/find execution results untouched, without additive rendering d
   const cwd = mkdtempSync(join(directory, "paths-"));
   writeFileSync(join(cwd, "odd name.txt"), "one");
   writeFileSync(join(cwd, "two.txt"), "two");
-  const baseline = await fixture(false, { cwd, tools: ["ls", "find"] }),
-    framed = await fixture(true, { cwd, tools: ["ls", "find"] });
+  // Exercise SDK find without requiring fd or downloads in offline CI.
+  const find = createFindToolDefinition(cwd, {
+    operations: {
+      exists: existsSync,
+      glob: (pattern, searchPath, { ignore, limit }) =>
+        globSync(pattern, { cwd: searchPath, exclude: ignore }).sort().slice(0, limit),
+    },
+  });
+  const options = { cwd, tools: ["ls", "find"], customTools: [find as ToolDefinition] };
+  const baseline = await fixture(false, options),
+    framed = await fixture(true, options);
   try {
     for (const name of ["ls", "find"]) {
       const args = name === "ls" ? { path: "." } : { pattern: "*.txt", path: "." };
       const a = await baseline.ctx.executeTool(name, args),
         b = await framed.ctx.executeTool(name, args);
       expect(b.result).toEqual(a.result);
-      expect(b.isError).toBe(false);
+      expect(b.isError, JSON.stringify(b.result)).toBe(false);
+      expect(b.result.content).toEqual([{ type: "text", text: "odd name.txt\ntwo.txt" }]);
       expect(b.result.details ?? {}).not.toHaveProperty("rendering");
     }
   } finally {

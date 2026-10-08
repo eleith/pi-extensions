@@ -1,5 +1,11 @@
 # @eleith-pi/tool-rendering
 
+## 0.1.3
+
+### Patch Changes
+
+- Use Pi's renderer API without replacing configured tools or modifying execution results. Preserve downstream renderer delegation, legacy display details, and compact frames; apply visibility changes to future rows. Requires Pi 1.0.4 or newer.
+
 ## 0.1.2
 
 ### Patch Changes
