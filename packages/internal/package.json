@@ -7,6 +7,7 @@
   "exports": {
     "./config": "./src/config.ts",
     "./commands": "./src/commands.ts",
+    "./frame": "./src/frame.ts",
     "./thinking": "./src/thinking.ts"
   },
   "scripts": {
@@ -15,6 +16,7 @@
     "test": "vitest run src"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   }
 }

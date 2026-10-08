@@ -1,8 +1,8 @@
 {
-  "name": "@eleith-pi/tool-rendering",
-  "version": "0.1.4",
+  "name": "@eleith-pi/web-search-codex",
+  "version": "0.1.0",
   "private": false,
-  "description": "Consistent minimal frames for Pi's built-in tools",
+  "description": "One small Codex-native web search tool for Pi",
   "keywords": [
     "pi-package"
   ],
@@ -10,7 +10,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/eleith/pi-extensions.git",
-    "directory": "extensions/tool-rendering"
+    "directory": "extensions/web-search-codex"
   },
   "files": [
     "dist/index.js",
@@ -30,6 +30,7 @@
     "@eleith/pi-internal": "workspace:*"
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },

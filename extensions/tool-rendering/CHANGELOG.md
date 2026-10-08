@@ -1,5 +1,11 @@
 # @eleith-pi/tool-rendering
 
+## 0.1.4
+
+### Patch Changes
+
+- Share the existing frame helpers with the new Codex web search extension without changing built-in tool rendering.
+
 ## 0.1.3
 
 ### Patch Changes

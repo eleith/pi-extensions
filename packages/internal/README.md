@@ -10,3 +10,7 @@ settings object with defaults.
 ## commands
 
 `registerCommand()` handles native registration, action completion, and usage.
+
+## frames
+
+`frame` provides shared tool-rendering components.
