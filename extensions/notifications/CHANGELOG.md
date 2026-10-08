@@ -1,5 +1,11 @@
 # @eleith-pi/notifications
 
+## 0.1.2
+
+### Patch Changes
+
+- Report interrupted runs using the final settlement's aborted flag, including runs shorter than 15 seconds.
+
 ## 0.1.1
 
 ### Patch Changes
