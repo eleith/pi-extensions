@@ -1,6 +1,6 @@
 {
   "name": "@eleith-pi/web-search-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "One small Codex-native web search tool for Pi",
   "keywords": [
@@ -30,9 +30,9 @@
     "@eleith/pi-internal": "workspace:*"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-ai": ">=1.1.0",
+    "@earendil-works/pi-coding-agent": ">=1.1.0",
+    "@earendil-works/pi-tui": ">=1.1.0"
   },
   "pi": {
     "extensions": [

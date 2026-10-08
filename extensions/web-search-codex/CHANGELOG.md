@@ -1,5 +1,11 @@
 # @eleith-pi/web-search-codex
 
+## 0.1.1
+
+### Patch Changes
+
+- Declare Pi 1.1.0 as the minimum compatible peer version, matching the extension's documented requirements.
+
 ## 0.1.0
 
 ### Minor Changes
