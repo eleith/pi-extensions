@@ -1,27 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import {
-  createReadToolDefinition,
-  createWriteToolDefinition,
-  createEditToolDefinition,
-  createGrepToolDefinition,
-  createFindToolDefinition,
-  createLsToolDefinition,
-  truncateHead,
-  type ExtensionAPI,
-  type Theme,
-  type ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import { rmSync } from "node:fs";
+import { truncateHead, type Theme, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { afterAll, expect, it, vi } from "vitest";
-import { registerReadRendering } from "./read.ts";
-import { registerWriteRendering } from "./write.ts";
-import { registerEditRendering } from "./edit.ts";
-import { registerGrepRendering } from "./grep.ts";
-import { registerFindRendering } from "./find.ts";
-import { registerLsRendering } from "./ls.ts";
+import { buildReadRendering } from "./read.ts";
+import { buildWriteRendering } from "./write.ts";
+import { buildEditRendering } from "./edit.ts";
+import { buildGrepRendering } from "./grep.ts";
+import { buildFindRendering } from "./find.ts";
+import { buildLsRendering } from "./ls.ts";
 import { FramedText } from "./frame.ts";
-import { RenderingState } from "./state.ts";
 
 // The root SDK loads provider/config modules: isolate it before any imports run.
 const directory = await vi.hoisted(async () => {
@@ -38,31 +25,18 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
-  const sdk = await importOriginal<typeof import("@earendil-works/pi-coding-agent")>();
-  return { ...sdk, createFindToolDefinition: vi.fn(sdk.createFindToolDefinition) };
-});
-
-const definitions = {
-  read: createReadToolDefinition,
-  write: createWriteToolDefinition,
-  edit: createEditToolDefinition,
-  grep: createGrepToolDefinition,
-  find: createFindToolDefinition,
-  ls: createLsToolDefinition,
+const builders = {
+  read: buildReadRendering,
+  write: buildWriteRendering,
+  edit: buildEditRendering,
+  grep: buildGrepRendering,
+  find: buildFindRendering,
+  ls: buildLsRendering,
 };
-const registrations = {
-  read: registerReadRendering,
-  write: registerWriteRendering,
-  edit: registerEditRendering,
-  grep: registerGrepRendering,
-  find: registerFindRendering,
-  ls: registerLsRendering,
-};
-type Name = keyof typeof definitions;
-type Tools = { [K in Name]: ReturnType<(typeof definitions)[K]> };
+type Name = keyof typeof builders;
+type Tools = { [K in Name]: ReturnType<(typeof builders)[K]> };
 type ReadContext = Parameters<NonNullable<Tools["read"]["renderCall"]>>[2];
-const names = Object.keys(definitions) as Name[];
+const names = Object.keys(builders) as Name[];
 const minimalTheme = {
   fg: (_color: string, text: string) => text,
   bg: (_color: string, text: string) => text,
@@ -144,14 +118,13 @@ function context<A>(args: A, patch: Partial<Omit<ReadContext, "args">> = {}) {
     expanded: false,
     showImages: false,
     isError: false,
+    durationMs: undefined,
+    outputPad: 0,
     ...patch,
   };
 }
-function capture<K extends Name>(name: K, state = new RenderingState(), cwd = directory) {
-  const registerTool = vi.fn<ExtensionAPI["registerTool"]>();
-  registrations[name]({ registerTool } as unknown as ExtensionAPI, cwd, state);
-  expect(registerTool).toHaveBeenCalledTimes(1);
-  return { tool: registerTool.mock.calls[0][0] as unknown as Tools[K], state };
+function capture<K extends Name>(name: K) {
+  return { tool: builders[name]() as Tools[K] };
 }
 function text(component: Component, width = 180) {
   return component
@@ -160,24 +133,14 @@ function text(component: Component, width = 180) {
     .join("\n");
 }
 // Only the table-driven tests erase the differing builtin parameter schemas.
-function erased(tool: Tools[Name]): ToolDefinition {
-  return tool as unknown as ToolDefinition;
+function erased(tool: Tools[Name]): ToolRenderers {
+  return tool as ToolRenderers;
 }
 
-it.each(names)("keeps %s metadata and its actual title fields", (name) => {
+it.each(names)("builds only %s presentation and preserves its title fields", (name) => {
   const { tool } = capture(name);
-  const original = definitions[name](directory);
-  const metadata = ({
-    execute: _execute,
-    renderCall: _call,
-    renderResult: _result,
-    renderShell: _shell,
-    ...rest
-  }: Tools[Name]) => rest;
-  expect(metadata(tool)).toEqual(metadata(original));
+  expect(Object.keys(tool)).toEqual(["renderShell", "renderCall", "renderResult"]);
   expect(tool.renderShell).toBe("self");
-  if (name !== "find" && name !== "ls")
-    expect(tool.execute.toString()).toBe(original.execute.toString());
   const renderer = erased(tool);
   const call = renderer.renderCall!(presets[name].args, theme, context(presets[name].args));
   expect(text(call)).toContain(presets[name].title);
@@ -359,49 +322,6 @@ it.each(names)("colors partial/error %s frames and limits error previews to five
   ).toContain("row-14");
 });
 
-it.each(names)("hands %s framed slots safely to native renderers, then re-enables them", (name) => {
-  const { tool: captured, state } = capture(name);
-  const tool = erased(captured);
-  const original = erased(definitions[name](directory));
-  const preset = presets[name];
-  const ctx = context(preset.args, { expanded: true });
-  const independent = erased(capture(name).tool);
-  const framedCall = tool.renderCall!(preset.args, theme, ctx);
-  const framedResult = tool.renderResult!(preset.result, options, theme, ctx);
-  state.enabled = false;
-  expect(independent.renderCall!(preset.args, theme, ctx)).toBeInstanceOf(FramedText);
-  const nativeCall = tool.renderCall!(preset.args, theme, { ...ctx, lastComponent: framedCall });
-  expect(nativeCall).not.toBeInstanceOf(FramedText);
-  expect(text(nativeCall)).toBe(
-    text(original.renderCall!(preset.args, theme, context(preset.args, { expanded: true }))),
-  );
-  // write returns a Container on success; edit returns a Container on error.
-  const result = { content: [{ type: "text" as const, text: "native error" }], details: undefined };
-  const resultContext = { ...ctx, isError: name !== "write", lastComponent: framedResult };
-  const nativeResult = tool.renderResult!(result, options, theme, resultContext);
-  expect(nativeResult).not.toBeInstanceOf(FramedText);
-  expect(text(nativeResult)).toBe(
-    text(
-      original.renderResult!(result, options, theme, {
-        ...resultContext,
-        lastComponent: undefined,
-        state: {},
-      }),
-    ),
-  );
-  state.enabled = true;
-  expect(
-    tool.renderCall!(preset.args, theme, { ...ctx, lastComponent: nativeCall }),
-  ).toBeInstanceOf(FramedText);
-  const restored = tool.renderResult!(preset.result, options, theme, {
-    ...ctx,
-    lastComponent: nativeResult,
-  });
-  expect(restored).toBeInstanceOf(FramedText);
-  expect(text(restored)).toContain("collapsed");
-  expect(capture(name).state.enabled).toBe(true);
-});
-
 it.each(["ls", "find"] as const)("keeps legacy %s details.rendering.text readable", (name) => {
   const { tool: captured } = capture(name);
   const tool = erased(captured);
@@ -419,59 +339,6 @@ it.each(["ls", "find"] as const)("keeps legacy %s details.rendering.text readabl
   expect(output).not.toContain("model-facing text");
   expect(output).toContain("limit reached");
 });
-
-it.each(["ls", "find"] as const)(
-  "keeps the %s execute wrapper adding display text to new calls",
-  async (name) => {
-    const cwd = mkdtempSync(join(directory, "execute-"));
-    writeFileSync(join(cwd, "one.txt"), "one");
-    writeFileSync(join(cwd, "two.txt"), "two");
-    let original: ToolDefinition;
-    if (name === "find") {
-      const sdk = await vi.importActual<typeof import("@earendil-works/pi-coding-agent")>(
-        "@earendil-works/pi-coding-agent",
-      );
-      const nativeFind = sdk.createFindToolDefinition(cwd, {
-        operations: { exists: () => true, glob: () => ["one.txt"] },
-      });
-      vi.mocked(createFindToolDefinition).mockReturnValueOnce(nativeFind);
-      original = erased(nativeFind);
-    } else {
-      original = erased(createLsToolDefinition(cwd));
-    }
-    const execute = vi.spyOn(original, "execute");
-    const { tool: captured } = capture(name, new RenderingState(), cwd);
-    const tool = erased(captured);
-    const args = { path: ".", pattern: "one.txt", limit: 1 };
-    const native = await original.execute(
-      "native",
-      args,
-      undefined,
-      undefined,
-      {} as Parameters<typeof original.execute>[4],
-    );
-    const signal = new AbortController().signal;
-    const onUpdate = vi.fn();
-    const ctx = { cwd } as Parameters<typeof tool.execute>[4];
-    const result = await tool.execute("wrapped", args, signal, onUpdate, ctx);
-    if (name === "find")
-      expect(execute).toHaveBeenLastCalledWith("wrapped", args, signal, onUpdate, ctx);
-    expect(result.content).toEqual(native.content);
-    expect(result.details).toEqual({
-      ...(native.details as object),
-      rendering: {
-        text: native.content
-          .filter((item) => item.type === "text")
-          .map((item) => item.text)
-          .join("\n")
-          .replace(/\r\n?/g, "\n"),
-      },
-    });
-    expect(text(tool.renderResult!(result, options, theme, context(args)))).toMatch(
-      /(?:one|two)\.txt/,
-    );
-  },
-);
 
 it("renders an incomplete streamed edit title without throwing", () => {
   const { tool } = capture("edit");
@@ -499,6 +366,39 @@ it("preserves find directory grouping and ls tree markers", () => {
     ),
   );
   expect(listing).toContain("├── one/\n└── two.txt");
+});
+
+it.each(["ls", "find"] as const)(
+  "keeps %s tree/group formatting for extensionless and whitespace names",
+  (name) => {
+    const tool = erased(capture(name).tool);
+    const result = {
+      content: [{ type: "text" as const, text: "LICENSE\r\nmy file\r" }],
+      details: undefined,
+    };
+    const output = text(tool.renderResult!(result, options, theme, context(presets[name].args)));
+    expect(output).toContain("├── LICENSE");
+    expect(output).toContain("└── my file");
+    expect(output).toContain(name === "ls" ? "2 entries" : "2 files");
+  },
+);
+
+it("keeps unfamiliar grep output visible with a bounded collapsed preview", () => {
+  const tool = erased(capture("grep").tool);
+  const result = { content: [{ type: "text" as const, text: rows }], details: undefined };
+  const ctx = context(presets.grep.args);
+  const collapsed = tool.renderResult!(result, options, theme, ctx);
+  const output = text(collapsed);
+  expect(output).toContain("row-3");
+  expect(output).not.toContain("row-4");
+  expect(output).not.toContain("0 matches");
+  expect(output).toContain("output · collapsed · 11 hidden");
+  expect(collapsed.render(180)).toHaveLength(4);
+  const expanded = tool.renderResult!(result, { ...options, expanded: true }, theme, {
+    ...ctx,
+    lastComponent: collapsed,
+  });
+  expect(text(expanded)).toContain("row-14");
 });
 
 it("keeps empty searches and directories distinct from errors", () => {

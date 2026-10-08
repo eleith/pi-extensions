@@ -1,8 +1,7 @@
-import {
+import type {
   createBashToolDefinition,
-  type AgentToolResult,
-  type BashToolInput,
-  type ExtensionAPI,
+  AgentToolResult,
+  BashToolInput,
 } from "@earendil-works/pi-coding-agent";
 import {
   frameComponent,
@@ -24,12 +23,10 @@ type BashRenderContext = Parameters<BashRenderResult>[3];
 type BashRenderOptions = Parameters<BashRenderResult>[1];
 type BashTheme = Parameters<BashRenderResult>[2];
 
-export function registerBashRendering(pi: ExtensionAPI, cwd: string, state: RenderingState): void {
-  const original = createBashToolDefinition(cwd);
-
+export function buildBashRendering(
+  state: RenderingState,
+): Pick<BuiltinBashTool, "renderShell" | "renderCall" | "renderResult"> {
   const renderCall: BashRenderCall = (args, theme, context) => {
-    if (!state.enabled && original.renderCall)
-      return state.nativeBash.renderCall(original.renderCall, args, theme, context);
     const command = typeof args?.command === "string" ? args.command : "";
     const titleArgs = { ...args, command };
     const status = frameStatus(context);
@@ -42,9 +39,6 @@ export function registerBashRendering(pi: ExtensionAPI, cwd: string, state: Rend
   };
 
   const renderResult: BashRenderResult = (result, options, theme, context) => {
-    if (!state.enabled && original.renderResult) {
-      return state.nativeBash.renderResult(original.renderResult, result, options, theme, context);
-    }
     state.bashTiming.update(context, options);
     const { state: rowState, isError, isPartial } = context;
     const paintContext = { state: rowState, isError, isPartial };
@@ -53,12 +47,7 @@ export function registerBashRendering(pi: ExtensionAPI, cwd: string, state: Rend
     );
   };
 
-  pi.registerTool({
-    ...original,
-    renderShell: "self",
-    renderCall,
-    renderResult,
-  });
+  return { renderShell: "self", renderCall, renderResult };
 }
 
 function buildBashTitle(args: BashToolInput, theme: BashTheme): string {

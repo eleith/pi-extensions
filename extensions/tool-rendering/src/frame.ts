@@ -51,13 +51,6 @@ export function frameComponent(
   return component;
 }
 
-/** Native renderers must not inherit our component's width-dependent painter. */
-export function builtinContext<T extends { lastComponent: Component | undefined }>(context: T): T {
-  return context.lastComponent instanceof FramedText
-    ? { ...context, lastComponent: undefined }
-    : context;
-}
-
 export type FrameStatus = "pending" | "success" | "error";
 
 const STATUS_COLOR: Record<FrameStatus, ThemeColor> = {

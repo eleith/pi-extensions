@@ -1,12 +1,10 @@
-import {
+import type {
   createEditToolDefinition,
-  type AgentToolResult,
-  type EditToolDetails,
-  type EditToolInput,
-  type ExtensionAPI,
+  AgentToolResult,
+  EditToolDetails,
+  EditToolInput,
 } from "@earendil-works/pi-coding-agent";
 import {
-  builtinContext,
   frameComponent,
   frameResultWithBottomLabel,
   frameStatus,
@@ -16,39 +14,29 @@ import {
 } from "./frame.ts";
 import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
-import type { RenderingState } from "./state.ts";
 
 type BuiltinEditTool = ReturnType<typeof createEditToolDefinition>;
 type EditRenderCall = NonNullable<BuiltinEditTool["renderCall"]>;
 type EditRenderResult = NonNullable<BuiltinEditTool["renderResult"]>;
 type EditTheme = Parameters<EditRenderResult>[2];
 
-export function registerEditRendering(pi: ExtensionAPI, cwd: string, state: RenderingState): void {
-  const original = createEditToolDefinition(cwd);
-
+export function buildEditRendering(): Pick<
+  BuiltinEditTool,
+  "renderShell" | "renderCall" | "renderResult"
+> {
   const renderCall: EditRenderCall = (args, theme, context) => {
-    if (!state.enabled && original.renderCall)
-      return original.renderCall(args, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       frameTop(editTitle(args, theme), frameStatus(context), theme, width),
     );
   };
 
   const renderResult: EditRenderResult = (result, options, theme, context) => {
-    if (!state.enabled && original.renderResult)
-      return original.renderResult(result, options, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       renderEditResult(result, options.expanded, theme, context, width),
     );
   };
 
-  pi.registerTool({
-    ...original,
-    name: "edit",
-    renderShell: "self",
-    renderCall,
-    renderResult,
-  });
+  return { renderShell: "self", renderCall, renderResult };
 }
 
 function editTitle(args: EditToolInput, theme: EditTheme): string {

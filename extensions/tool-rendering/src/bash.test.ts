@@ -1,9 +1,9 @@
 import { rmSync } from "node:fs";
 import * as agent from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Container, Text, visibleWidth } from "@earendil-works/pi-tui";
+import type { ThemeColor } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerBashRendering } from "./bash.ts";
+import { buildBashRendering } from "./bash.ts";
 import { FramedText } from "./frame.ts";
 import { RenderingState } from "./state.ts";
 
@@ -17,11 +17,6 @@ const scratch = await vi.hoisted(async () => {
   return directory;
 });
 
-// Wrap only the factory to observe its real definition; native renderers/execution stay intact.
-vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
-  const original = await importOriginal<typeof agent>();
-  return { ...original, createBashToolDefinition: vi.fn(original.createBashToolDefinition) };
-});
 agent.initTheme("dark", false);
 
 type Tool = ReturnType<typeof agent.createBashToolDefinition>;
@@ -48,6 +43,8 @@ function context(overrides: Partial<Context> = {}): Context {
     expanded: false,
     showImages: false,
     isError: false,
+    durationMs: undefined,
+    outputPad: 0,
     ...overrides,
   };
 }
@@ -57,15 +54,9 @@ function result(text: string): Parameters<RenderResult>[0] {
 function fixture() {
   const state = new RenderingState();
   states.push(state);
-  let tool: Tool | undefined;
-  const pi = {
-    registerTool: vi.fn((definition: Tool) => {
-      tool = definition;
-    }),
-  };
-  registerBashRendering(pi as unknown as ExtensionAPI, scratch, state);
-  if (!tool?.renderCall || !tool.renderResult) throw new Error("Missing bash renderers");
-  return { state, pi, tool, call: tool.renderCall, render: tool.renderResult };
+  const tool = buildBashRendering(state);
+  if (!tool.renderCall || !tool.renderResult) throw new Error("Missing bash renderers");
+  return { state, tool, call: tool.renderCall, render: tool.renderResult };
 }
 const states: RenderingState[] = [];
 beforeEach(() => {
@@ -84,20 +75,11 @@ afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-describe("registered bash renderers", () => {
-  it("registers the original tool with only presentation overridden on Pi 1.0.0", () => {
-    const factory = vi.mocked(agent.createBashToolDefinition);
-    const { pi, tool } = fixture();
-    const original: Tool = factory.mock.results[0]!.value;
-    expect(pi.registerTool).toHaveBeenCalledTimes(1);
-    expect(factory).toHaveBeenCalledWith(scratch);
+describe("bash renderers", () => {
+  it("builds presentation only, without execution, schemas or eager timers", () => {
+    const { tool } = fixture();
+    expect(Object.keys(tool)).toEqual(["renderShell", "renderCall", "renderResult"]);
     expect(tool.renderShell).toBe("self");
-    for (const key of Object.keys(original) as (keyof Tool)[]) {
-      if (key !== "renderShell" && key !== "renderCall" && key !== "renderResult") {
-        expect(tool[key], String(key)).toBe(original[key]);
-      }
-    }
-    expect(tool.execute).toBe(original.execute);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -294,75 +276,17 @@ describe("registered bash renderers", () => {
     expect(text).toContain(`${expected} · ✓ exit 0`);
   });
 
-  it("safely falls back to native Text/Container across hide and reenable", () => {
-    const { state, call, render } = fixture();
-    const args = { command: "echo hello" };
-    const ctx = context({ args });
-    const framedCall = call(args, theme, ctx);
-    const framedResult = render(result("hello"), collapsed, theme, ctx);
-    state.enabled = false;
-    state.bashTiming.clear();
-    const nativeCall = call(args, theme, { ...ctx, lastComponent: framedCall });
-    const nativeResult = render(result("hello"), collapsed, theme, {
-      ...ctx,
-      lastComponent: framedResult,
-    });
-    expect(nativeCall).toBeInstanceOf(Text);
-    expect(nativeCall).not.toBeInstanceOf(FramedText);
-    expect(nativeResult).toBeInstanceOf(Container);
-    expect(() => nativeResult.render(80)).not.toThrow();
-    expect(
-      render(result("hello again"), collapsed, theme, { ...ctx, lastComponent: nativeResult }),
-    ).toBe(nativeResult);
-    state.enabled = true;
-    const freshCall = call(args, theme, { ...ctx, lastComponent: nativeCall });
-    const freshResult = render(result("hello"), collapsed, theme, {
-      ...ctx,
-      lastComponent: nativeResult,
-    });
-    expect(freshCall).toBeInstanceOf(FramedText);
-    expect(freshCall).not.toBe(framedCall);
-    expect(freshResult).toBeInstanceOf(FramedText);
-    expect(freshResult).not.toBe(framedResult);
-    expect(freshResult.render(80).join("\n")).toContain("✓ exit 0");
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("preserves the native renderer's timing state without namespace collisions", () => {
-    const { state, call, render } = fixture();
-    const ctx = context({ executionStarted: true, isPartial: true });
-    state.enabled = false;
-    call(ctx.args, theme, ctx);
-    const native = render(result("stream"), partial, theme, ctx);
-    expect(native).toBeInstanceOf(Container);
-    expect(ctx.state.startedAt).toBeUndefined();
-    expect(ctx.state.interval).toBeUndefined();
-    expect(vi.getTimerCount()).toBe(1);
-    // Native state is opaque and separate from our timing namespace.
-    render(result("done"), collapsed, theme, { ...ctx, lastComponent: native, isPartial: false });
-    expect(ctx.state.interval).toBeUndefined();
-    expect(vi.getTimerCount()).toBe(0);
-    state.enabled = true;
-    expect(render(result("done"), collapsed, theme, ctx)).toBeInstanceOf(FramedText);
-    expect(ctx.state.startedAt).toBeUndefined();
-  });
-
-  it("pauses active timers on hide and preserves elapsed when reenabled", () => {
+  it("keeps an already selected framed renderer and its timer active after hide", () => {
     const { state, render } = fixture();
     const ctx = context({ executionStarted: true, isPartial: true });
     const framed = render(result("stream"), partial, theme, ctx);
-    vi.advanceTimersByTime(1500);
     state.enabled = false;
-    state.bashTiming.pause();
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(1500);
+    const updated = render(result("stream"), partial, theme, { ...ctx, lastComponent: framed });
+    expect(updated).toBe(framed);
+    expect(updated.render(100).join("\n")).toContain("1.5s · running");
     expect(ctx.invalidate).toHaveBeenCalledTimes(1);
-    const native = render(result("stream"), partial, theme, { ...ctx, lastComponent: framed });
-    expect(native).toBeInstanceOf(Container);
-    state.nativeBash.clear(true);
-    state.enabled = true;
-    const fresh = render(result("stream"), partial, theme, { ...ctx, lastComponent: native });
-    expect(fresh).not.toBe(framed);
-    expect(fresh.render(100).join("\n")).toContain("4.5s · running");
-    expect(vi.getTimerCount()).toBe(1);
+    state.bashTiming.stop(ctx.toolCallId);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

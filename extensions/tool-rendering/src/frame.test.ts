@@ -1,8 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Text, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { expect, it, vi } from "vitest";
 import {
-  builtinContext,
   frameComponent,
   frameTop,
   frameBottomWithLabel,
@@ -112,14 +111,6 @@ it("contains painter failures outside Pi's renderer callback guard", () => {
   expect(() => component.render(20)).not.toThrow();
   expect(component.render(80).join("\n")).toContain("could not be rendered");
   for (const line of component.render(5)) expect(visibleWidth(line)).toBeLessThanOrEqual(5);
-});
-
-it("never lends a FramedText painter to a builtin renderer", () => {
-  const component = frameComponent({ lastComponent: undefined }, () => "custom");
-  const ctx = { lastComponent: component, args: { path: "a" } };
-  expect(builtinContext(ctx)).toEqual({ ...ctx, lastComponent: undefined });
-  const native = { lastComponent: new Text("native", 0, 0) };
-  expect(builtinContext(native)).toBe(native);
 });
 
 it("errors take precedence over partial state, and collapsed errors show five lines", () => {

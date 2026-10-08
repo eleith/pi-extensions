@@ -73,17 +73,6 @@ export class BashTiming {
     this.active.delete(toolCallId);
   }
 
-  /** Hiding chrome stops repainting, not the elapsed time of an ongoing command. */
-  pause(): void {
-    this.generation++;
-    for (const timing of this.active.values()) {
-      if (timing.interval !== undefined) clearInterval(timing.interval);
-      timing.interval = undefined;
-      timing.invalidate = undefined;
-      timing.generation = this.generation;
-    }
-  }
-
   clear(): void {
     for (const timing of this.active.values()) this.settle(timing);
     this.active.clear();

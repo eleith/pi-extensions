@@ -1,11 +1,9 @@
-import {
+import type {
   createWriteToolDefinition,
-  type AgentToolResult,
-  type ExtensionAPI,
-  type WriteToolInput,
+  AgentToolResult,
+  WriteToolInput,
 } from "@earendil-works/pi-coding-agent";
 import {
-  builtinContext,
   frameComponent,
   frameResultWithBottomLabel,
   frameStatus,
@@ -15,39 +13,29 @@ import {
 } from "./frame.ts";
 import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
-import type { RenderingState } from "./state.ts";
 
 type BuiltinWriteTool = ReturnType<typeof createWriteToolDefinition>;
 type WriteRenderCall = NonNullable<BuiltinWriteTool["renderCall"]>;
 type WriteRenderResult = NonNullable<BuiltinWriteTool["renderResult"]>;
 type WriteTheme = Parameters<WriteRenderResult>[2];
 
-export function registerWriteRendering(pi: ExtensionAPI, cwd: string, state: RenderingState): void {
-  const original = createWriteToolDefinition(cwd);
-
+export function buildWriteRendering(): Pick<
+  BuiltinWriteTool,
+  "renderShell" | "renderCall" | "renderResult"
+> {
   const renderCall: WriteRenderCall = (args, theme, context) => {
-    if (!state.enabled && original.renderCall)
-      return original.renderCall(args, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       frameTop(writeTitle(args, theme), frameStatus(context), theme, width),
     );
   };
 
   const renderResult: WriteRenderResult = (result, options, theme, context) => {
-    if (!state.enabled && original.renderResult)
-      return original.renderResult(result, options, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       renderWriteResult(result, options.expanded, theme, context, width),
     );
   };
 
-  pi.registerTool({
-    ...original,
-    name: "write",
-    renderShell: "self",
-    renderCall,
-    renderResult,
-  });
+  return { renderShell: "self", renderCall, renderResult };
 }
 
 function writeTitle(args: WriteToolInput, theme: WriteTheme): string {

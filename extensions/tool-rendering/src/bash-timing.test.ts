@@ -20,6 +20,8 @@ function context(overrides: Partial<Context> = {}): Context {
     expanded: false,
     showImages: false,
     isError: false,
+    durationMs: undefined,
+    outputPad: 0,
     ...overrides,
   };
 }
@@ -145,23 +147,6 @@ describe("BashTiming", () => {
     expect(a.invalidate).not.toHaveBeenCalled();
     expect(b.invalidate).toHaveBeenCalledTimes(1);
     second.dispose();
-  });
-
-  it("hiding and showing preserves elapsed time and still permits completion while hidden", () => {
-    const timing = new BashTiming();
-    const ctx = context();
-    timing.update(ctx, partial);
-    vi.advanceTimersByTime(1000);
-    timing.pause();
-    expect(vi.getTimerCount()).toBe(0);
-    vi.advanceTimersByTime(5000);
-    expect(timing.update(ctx, partial)).toBe(6000);
-    expect(vi.getTimerCount()).toBe(1);
-    timing.pause();
-    vi.advanceTimersByTime(500);
-    timing.stop(ctx.toolCallId);
-    expect(timing.update(ctx, final)).toBe(6500);
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("preserves completed elapsed through lifecycle clears", () => {

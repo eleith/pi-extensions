@@ -1,13 +1,11 @@
-import {
+import type {
   createFindToolDefinition,
-  type AgentToolResult,
-  type ExtensionAPI,
-  type FindToolDetails,
-  type FindToolInput,
+  AgentToolResult,
+  FindToolDetails,
+  FindToolInput,
 } from "@earendil-works/pi-coding-agent";
 import { basename, dirname } from "node:path";
 import {
-  builtinContext,
   frameComponent,
   frameResultWithBottomLabel,
   frameStatus,
@@ -17,7 +15,6 @@ import {
 } from "./frame.ts";
 import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
-import type { RenderingState } from "./state.ts";
 
 type BuiltinFindTool = ReturnType<typeof createFindToolDefinition>;
 type FindRenderCall = NonNullable<BuiltinFindTool["renderCall"]>;
@@ -30,48 +27,23 @@ interface FindDisplayDetails extends FindToolDetails {
   };
 }
 
-export function registerFindRendering(pi: ExtensionAPI, cwd: string, state: RenderingState): void {
-  const original = createFindToolDefinition(cwd);
-
+export function buildFindRendering(): Pick<
+  BuiltinFindTool,
+  "renderShell" | "renderCall" | "renderResult"
+> {
   const renderCall: FindRenderCall = (args, theme, context) => {
-    if (!state.enabled && original.renderCall)
-      return original.renderCall(args, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       frameTop(findTitle(args, theme), frameStatus(context), theme, width),
     );
   };
 
   const renderResult: FindRenderResult = (result, options, theme, context) => {
-    if (!state.enabled && original.renderResult)
-      return original.renderResult(result, options, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       renderFindResult(result, options.expanded, theme, context, width),
     );
   };
 
-  pi.registerTool({
-    ...original,
-    name: "find",
-    renderShell: "self",
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const result = (await original.execute(
-        toolCallId,
-        params,
-        signal,
-        onUpdate,
-        ctx,
-      )) as AgentToolResult<FindDisplayDetails>;
-      result.details = {
-        ...result.details,
-        rendering: {
-          text: normalizeLineEndings(textFromResult(result)),
-        },
-      };
-      return result;
-    },
-    renderCall,
-    renderResult,
-  });
+  return { renderShell: "self", renderCall, renderResult };
 }
 
 function findTitle(args: FindToolInput, theme: FindTheme): string {
@@ -90,7 +62,7 @@ function renderFindResult(
   const status = frameStatus(context);
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
-  const text = result.details?.rendering?.text ?? textFromResult(result);
+  const text = normalizeLineEndings(result.details?.rendering?.text ?? textFromResult(result));
   const paths =
     text.trim() === "No files found matching pattern"
       ? []

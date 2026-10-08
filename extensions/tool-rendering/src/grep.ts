@@ -1,12 +1,10 @@
-import {
+import type {
   createGrepToolDefinition,
-  type AgentToolResult,
-  type ExtensionAPI,
-  type GrepToolDetails,
-  type GrepToolInput,
+  AgentToolResult,
+  GrepToolDetails,
+  GrepToolInput,
 } from "@earendil-works/pi-coding-agent";
 import {
-  builtinContext,
   frameComponent,
   frameResultWithBottomLabel,
   frameStatus,
@@ -15,39 +13,30 @@ import {
   resultLabel,
 } from "./frame.ts";
 import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
-import type { RenderingState } from "./state.ts";
+import { previewLines } from "./preview.ts";
 
 type BuiltinGrepTool = ReturnType<typeof createGrepToolDefinition>;
 type GrepRenderCall = NonNullable<BuiltinGrepTool["renderCall"]>;
 type GrepRenderResult = NonNullable<BuiltinGrepTool["renderResult"]>;
 type GrepTheme = Parameters<GrepRenderResult>[2];
 
-export function registerGrepRendering(pi: ExtensionAPI, cwd: string, state: RenderingState): void {
-  const original = createGrepToolDefinition(cwd);
-
+export function buildGrepRendering(): Pick<
+  BuiltinGrepTool,
+  "renderShell" | "renderCall" | "renderResult"
+> {
   const renderCall: GrepRenderCall = (args, theme, context) => {
-    if (!state.enabled && original.renderCall)
-      return original.renderCall(args, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       frameTop(grepTitle(args, theme), frameStatus(context), theme, width),
     );
   };
 
   const renderResult: GrepRenderResult = (result, options, theme, context) => {
-    if (!state.enabled && original.renderResult)
-      return original.renderResult(result, options, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       renderGrepResult(result, options.expanded, theme, context, width),
     );
   };
 
-  pi.registerTool({
-    ...original,
-    name: "grep",
-    renderShell: "self",
-    renderCall,
-    renderResult,
-  });
+  return { renderShell: "self", renderCall, renderResult };
 }
 
 function grepTitle(args: GrepToolInput, theme: GrepTheme): string {
@@ -72,14 +61,21 @@ function renderGrepResult(
   const limit = result.details?.matchLimitReached ? " · limit reached" : "";
   const truncated =
     result.details?.truncation?.truncated || result.details?.linesTruncated ? " · truncated" : "";
-  if (matches.length === 0)
+  if (matches.length === 0) {
+    const empty = !text || text.trim() === "No matches found";
+    const { shown, hidden } = previewLines(
+      empty ? [] : text.replace(/\n$/, "").split("\n"),
+      expanded,
+      3,
+    );
     return frameResultWithBottomLabel(
-      "",
-      resultLabel(`0 matches${limit}${truncated}`, expanded, 0, theme),
+      shown.join("\n"),
+      resultLabel(empty ? `0 matches${limit}${truncated}` : "output", expanded, hidden, theme),
       status,
       theme,
       width,
     );
+  }
 
   // Three matches across three files use at most eight grouped lines (headings and spacing included).
   // Context and truncation notices remain available when expanded, but cannot grow the preview.

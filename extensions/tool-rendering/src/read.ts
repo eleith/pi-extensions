@@ -1,12 +1,10 @@
-import {
+import type {
   createReadToolDefinition,
-  type AgentToolResult,
-  type ExtensionAPI,
-  type ReadToolDetails,
-  type ReadToolInput,
+  AgentToolResult,
+  ReadToolDetails,
+  ReadToolInput,
 } from "@earendil-works/pi-coding-agent";
 import {
-  builtinContext,
   frameComponent,
   frameResultWithBottomLabel,
   frameStatus,
@@ -16,39 +14,29 @@ import {
 } from "./frame.ts";
 import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
-import type { RenderingState } from "./state.ts";
 
 type BuiltinReadTool = ReturnType<typeof createReadToolDefinition>;
 type ReadRenderCall = NonNullable<BuiltinReadTool["renderCall"]>;
 type ReadRenderResult = NonNullable<BuiltinReadTool["renderResult"]>;
 type ReadTheme = Parameters<ReadRenderResult>[2];
 
-export function registerReadRendering(pi: ExtensionAPI, cwd: string, state: RenderingState): void {
-  const original = createReadToolDefinition(cwd);
-
+export function buildReadRendering(): Pick<
+  BuiltinReadTool,
+  "renderShell" | "renderCall" | "renderResult"
+> {
   const renderCall: ReadRenderCall = (args, theme, context) => {
-    if (!state.enabled && original.renderCall)
-      return original.renderCall(args, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       frameTop(readTitle(args, theme), frameStatus(context), theme, width),
     );
   };
 
   const renderResult: ReadRenderResult = (result, options, theme, context) => {
-    if (!state.enabled && original.renderResult)
-      return original.renderResult(result, options, theme, builtinContext(context));
     return frameComponent(context, (width) =>
       renderReadResult(result, options.expanded, theme, context, width),
     );
   };
 
-  pi.registerTool({
-    ...original,
-    name: "read",
-    renderShell: "self",
-    renderCall,
-    renderResult,
-  });
+  return { renderShell: "self", renderCall, renderResult };
 }
 
 function readTitle(args: ReadToolInput, theme: ReadTheme): string {

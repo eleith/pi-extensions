@@ -28,7 +28,7 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-it("handles real SDK streamed rows and cleans up hidden native bash timers without a final draw", async () => {
+it("uses the resolver chain and keeps streamed rows stable across toggles", async () => {
   initTheme("dark", false);
   const credentials = {
     read: async () => undefined,
@@ -99,6 +99,8 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
     model,
     sessionManager: SessionManager.inMemory(directory),
   });
+  const resolve = (name: string) =>
+    session.extensionRunner.resolveToolRenderers(name, () => session.getToolDefinition(name));
   const errors: unknown[] = [];
   const requestRender = vi.fn();
   try {
@@ -109,7 +111,7 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
     });
     // ToolExecutionComponent receives incomplete argument objects before execution/validation.
     for (const name of ["bash", "read", "grep", "ls", "find", "write", "edit"]) {
-      const definition = session.extensionRunner.getToolDefinition(name);
+      const definition = resolve(name);
       expect(definition).toBeDefined();
       const row = new ToolExecutionComponent(
         name,
@@ -128,7 +130,7 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
       "malformed-command",
       { command: 123 },
       {},
-      session.extensionRunner.getToolDefinition("bash"),
+      resolve("bash"),
       { requestRender } as never,
       directory,
     );
@@ -138,7 +140,7 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
       "cached-read",
       { path: "before.txt" },
       {},
-      session.extensionRunner.getToolDefinition("read"),
+      resolve("read"),
       { requestRender } as never,
       directory,
     );
@@ -171,7 +173,7 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
 
     vi.useFakeTimers();
     vi.setSystemTime(1000);
-    const definition = session.extensionRunner.getToolDefinition("bash");
+    const definition = resolve("bash");
     if (!definition) throw Error("Bash definition missing");
     const row = new ToolExecutionComponent(
       "bash",
@@ -194,9 +196,25 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
     expect(row.render(80).join("\n")).toContain("1.0s");
     expect(row.render(80).join("\n")).toContain("1.0s");
     await session.prompt("/eleith:tool-rendering hide");
-    expect(vi.getTimerCount()).toBe(0);
-    row.invalidate();
     expect(vi.getTimerCount()).toBe(1);
+    expect(resolve("bash")).toBe(session.getToolDefinition("bash"));
+    const nativeRow = new ToolExecutionComponent(
+      "bash",
+      "future-native",
+      { command: "printf native" },
+      {},
+      resolve("bash"),
+      { requestRender } as never,
+      directory,
+    );
+    expect(nativeRow.render(80).join("\n")).not.toContain("collapsed");
+    row.invalidate();
+    expect(row.render(80).join("\n")).toContain("collapsed");
+    expect(vi.getTimerCount()).toBe(1);
+    await session.prompt("/eleith:tool-rendering show");
+    expect(resolve("bash")?.renderShell).toBe("self");
+    nativeRow.invalidate();
+    expect(nativeRow.render(80).join("\n")).not.toContain("collapsed");
     vi.advanceTimersByTime(1000);
     await session.extensionRunner.emit({
       type: "tool_execution_end",
@@ -206,10 +224,24 @@ it("handles real SDK streamed rows and cleans up hidden native bash timers witho
       isError: false,
     });
     expect(vi.getTimerCount()).toBe(0);
-    // No final updateResult: the host can settle or reload before that row is drawn again.
+    // Shutdown also stops an abandoned framed row without fabricating a final result.
+    const abandoned = new ToolExecutionComponent(
+      "bash",
+      "abandoned",
+      { command: "printf pending" },
+      {},
+      resolve("bash"),
+      { requestRender } as never,
+      directory,
+    );
+    abandoned.setArgsComplete();
+    abandoned.markExecutionStarted();
+    abandoned.updateResult({ content: [], details: undefined, isError: false }, true);
+    expect(vi.getTimerCount()).toBe(1);
     await session.extensionRunner.emit({ type: "session_shutdown", reason: "reload" });
     expect(vi.getTimerCount()).toBe(0);
     expect(() => row.invalidate()).not.toThrow();
+    expect(() => abandoned.invalidate()).not.toThrow();
     expect(vi.getTimerCount()).toBe(0);
     expect(errors).toEqual([]);
     expect(turns).not.toHaveBeenCalled();
