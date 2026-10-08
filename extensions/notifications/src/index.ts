@@ -33,6 +33,9 @@ export default async function notifications(pi: ExtensionAPI): Promise<void> {
   pi.on("session_start", () => controller.reset());
   pi.on("agent_start", () => controller.startRun());
   pi.on("agent_before_settle", (event) => controller.captureOutcome(event.outcome));
-  pi.on("agent_settled", (_event, ctx) => controller.settleRun(ctx));
+  pi.on("agent_settled", (event, ctx) => {
+    if (event.aborted) controller.captureOutcome("aborted");
+    return controller.settleRun(ctx);
+  });
   pi.on("session_shutdown", () => controller.dispose());
 }

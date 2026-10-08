@@ -48,7 +48,7 @@ afterAll(() => {
 async function load(mode: ExtensionCommandContext["mode"] = "tui") {
   type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
   type Listener = (
-    event: { type: string; outcome?: string },
+    event: { type: string; outcome?: string; aborted?: boolean },
     ctx: ExtensionCommandContext,
   ) => void | Promise<void>;
   const listeners = new Map<string, Listener[]>();
@@ -74,8 +74,8 @@ async function load(mode: ExtensionCommandContext["mode"] = "tui") {
     pi,
     ctx,
     notify,
-    async emit(type: string, outcome?: string) {
-      for (const listener of listeners.get(type) ?? []) await listener({ type, outcome }, ctx);
+    async emit(type: string, details: { outcome?: string; aborted?: boolean } = {}) {
+      for (const listener of listeners.get(type) ?? []) await listener({ type, ...details }, ctx);
     },
     command() {
       const command = pi.registerCommand.mock.calls[0]?.[1];
@@ -105,7 +105,7 @@ it("wires final settlement, outcomes, toggles, and test feedback", async () => {
   vi.advanceTimersByTime(16_000);
   await notifier.emit("agent_end");
   expect(transport.deliver).not.toHaveBeenCalled();
-  await notifier.emit("agent_before_settle", "completed");
+  await notifier.emit("agent_before_settle", { outcome: "completed" });
   await notifier.emit("agent_settled");
   expect(transport.deliver).toHaveBeenCalledTimes(1);
   await notifier.command().handler("", notifier.ctx);
@@ -113,6 +113,37 @@ it("wires final settlement, outcomes, toggles, and test feedback", async () => {
   transport.deliver.mockResolvedValue("none");
   await notifier.command().handler("test", notifier.ctx);
   expect(notifier.notify).toHaveBeenLastCalledWith("Pi notification test: none", "warning");
+  await notifier.emit("session_shutdown");
+});
+
+it.each([
+  { duration: 100, label: "0s" },
+  { duration: 16_000, label: "16s" },
+])(
+  "notifies for an interrupted $duration ms run without a pre-settlement event",
+  async ({ duration, label }) => {
+    const notifier = await load();
+    await notifier.emit("session_start");
+    await notifier.emit("agent_start");
+    vi.advanceTimersByTime(duration);
+    await notifier.emit("agent_settled", { aborted: true });
+    expect(transport.deliver).toHaveBeenCalledExactlyOnceWith(
+      { title: "π · session - project", body: `Run stopped · ${label}` },
+      expect.any(AbortSignal),
+    );
+    await notifier.emit("agent_settled", { aborted: true });
+    expect(transport.deliver).toHaveBeenCalledTimes(1);
+    await notifier.emit("session_shutdown");
+  },
+);
+
+it("prefers the final aborted flag over an earlier completed outcome", async () => {
+  const notifier = await load();
+  await notifier.emit("session_start");
+  await notifier.emit("agent_start");
+  await notifier.emit("agent_before_settle", { outcome: "completed" });
+  await notifier.emit("agent_settled", { aborted: true });
+  expect(transport.deliver.mock.calls[0]?.[0].body).toBe("Run stopped · 0s");
   await notifier.emit("session_shutdown");
 });
 
