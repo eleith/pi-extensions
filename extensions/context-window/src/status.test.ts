@@ -113,6 +113,34 @@ describe("context status windows", () => {
   });
 });
 
+describe("catalog baseline and desired state", () => {
+  it("reports unknown baseline honestly without inventing an extended target", () => {
+    const report = formatContextStatus({ ...status, standardWindow: undefined }, NOW);
+    expect(report).toMatch(/^    Standard +unknown$/m);
+    expect(report).toContain("unknown; reselect a catalog model");
+  });
+
+  it("explains an already extended-sized catalog baseline", () => {
+    const report = formatContextStatus(
+      { ...status, standardWindow: 1_000_000, extendedWindow: 1_000_000 },
+      NOW,
+    );
+    expect(report).toContain("catalog; no smaller default known");
+  });
+
+  it.each([true, false])(
+    "keeps desired preference %s separate from effective usage and replay pause",
+    (desiredExtended) => {
+      const report = formatContextStatus({ ...status, desiredExtended, replayPaused: true }, NOW);
+      expect(report).toContain(
+        `${desiredExtended ? "extended" : "standard"} (desired, not a receipt)`,
+      );
+      expect(report).toMatch(/^    Usage +unknown \/ 272k$/m);
+      expect(report).toContain("paused; explicitly extend or restore");
+    },
+  );
+});
+
 describe("context status compactions", () => {
   it("reports no compaction on an empty branch", () => {
     const report = formatContextStatus(status, NOW);

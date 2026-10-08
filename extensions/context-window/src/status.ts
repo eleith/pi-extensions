@@ -5,7 +5,9 @@ import { modelKey } from "./profiles.ts";
 interface ContextStatus {
   readonly model: Model<Api>;
   readonly usage: ContextUsage | undefined;
-  readonly standardWindow: number;
+  readonly standardWindow: number | undefined;
+  readonly desiredExtended?: boolean;
+  readonly replayPaused?: boolean;
   readonly extendedWindow: number | undefined;
   readonly branch: readonly SessionEntry[];
 }
@@ -85,10 +87,9 @@ function cacheRows(message: AssistantMessage | undefined, currentModel: Model<Ap
 
 /** Read-only report: no settings-file guesses, provider calls, or preference changes. */
 export function formatContextStatus(status: ContextStatus, now = Date.now()): string {
-  const { model, usage, standardWindow, extendedWindow, branch } = status;
-  const compactions = branch.filter((entry) => entry.type === "compaction");
-  const lastCompaction = compactions.at(-1);
-  return [
+  const { model, usage, standardWindow, extendedWindow, branch, desiredExtended, replayPaused } =
+    status;
+  const lines = [
     `context · ${modelKey(model)}`,
     "",
     "  window",
@@ -97,19 +98,39 @@ export function formatContextStatus(status: ContextStatus, now = Date.now()): st
       `${tokens(usage?.tokens)} / ${tokens(usage?.contextWindow ?? model.contextWindow)}`,
     ),
     row("Standard", tokens(standardWindow)),
-    row(
-      "Extended",
-      extendedWindow === undefined ? "not configured" : `${tokens(extendedWindow)} (local window)`,
-    ),
+  ];
+
+  if (standardWindow === undefined) {
+    lines.push(row("Baseline", "unknown; reselect a catalog model"));
+  } else if (extendedWindow === standardWindow) {
+    lines.push(row("Baseline", "catalog; no smaller default known"));
+  }
+
+  if (desiredExtended !== undefined) {
+    const preference = desiredExtended ? "extended" : "standard";
+    lines.push(row("Branch preference", `${preference} (desired, not a receipt)`));
+  }
+  if (replayPaused) {
+    lines.push(row("Automatic replay", "paused; explicitly extend or restore"));
+  }
+
+  const extendedLabel =
+    extendedWindow === undefined ? "not configured" : `${tokens(extendedWindow)} (local window)`;
+  lines.push(row("Extended", extendedLabel));
+
+  const compactions = branch.filter((entry) => entry.type === "compaction");
+  const lastCompaction = compactions.at(-1);
+  const lastCompacted = lastCompaction
+    ? elapsed(lastCompaction.timestamp, now)
+    : "never on this branch";
+  lines.push(
     "",
     "  compaction",
     row("Compactions", `${compactions.length} on this branch`),
-    row(
-      "Last compacted",
-      lastCompaction ? elapsed(lastCompaction.timestamp, now) : "never on this branch",
-    ),
+    row("Last compacted", lastCompacted),
     "",
     "  cache · last assistant request",
     ...cacheRows(lastAssistant(branch), model),
-  ].join("\n");
+  );
+  return lines.join("\n");
 }

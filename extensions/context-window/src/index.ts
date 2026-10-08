@@ -19,9 +19,9 @@ export default async function contextWindow(pi: ExtensionAPI): Promise<void> {
   pi.on("session_start", (_event, ctx) => controller.restore(ctx));
   pi.on("session_tree", (_event, ctx) => controller.restore(ctx));
   pi.on("model_select", (_event, ctx) => controller.modelSelected(ctx));
-  pi.on("session_shutdown", () => controller.shutdown());
+  pi.on("session_shutdown", (_event, ctx) => controller.shutdown(ctx));
   pi.on("input", async (event, ctx) => {
-    // Reconcile before Pi checks pre-prompt compaction; catalogs can replace our private copy.
+    // Reconcile before Pi checks pre-prompt compaction, unless interrupted work paused replay.
     if (event.streamingBehavior === undefined && ctx.isIdle()) await controller.reconcile(ctx);
   });
   pi.on("before_agent_start", (_event, ctx) => controller.reconcile(ctx));
