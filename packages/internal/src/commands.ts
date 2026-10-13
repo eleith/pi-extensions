@@ -7,7 +7,9 @@ interface CommandOptions {
   description: string;
   actions: readonly string[];
   defaultAction: string;
-  handler(action: string, ctx: ExtensionCommandContext): void | Promise<void>;
+  /** Only listed actions accept trailing input; preserve it verbatim (for URLs, etc.). */
+  argumentActions?: readonly string[];
+  handler(action: string, ctx: ExtensionCommandContext, argument?: string): void | Promise<void>;
 }
 
 export function registerCommand(pi: ExtensionAPI, options: CommandOptions): void {
@@ -47,12 +49,19 @@ async function invokeCommand(
   args: string,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
-  const action = args.trim().toLowerCase() || options.defaultAction;
-  if (action !== options.defaultAction && !options.actions.includes(action)) {
+  const input = args.trim();
+  const split = input.search(/\s/);
+  const action = (split < 0 ? input : input.slice(0, split)).toLowerCase() || options.defaultAction;
+  const argument = split < 0 ? "" : input.slice(split).trim();
+  if (
+    (action !== options.defaultAction && !options.actions.includes(action)) ||
+    (argument && !options.argumentActions?.includes(action))
+  ) {
     ctx.ui.notify(`Usage: ${commandUsage(options)}`, "warning");
     return;
   }
-  await options.handler(action, ctx);
+  if (argument) await options.handler(action, ctx, argument);
+  else await options.handler(action, ctx);
 }
 
 function findConflict(pi: ExtensionAPI, name: string) {
