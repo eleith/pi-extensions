@@ -1,0 +1,50 @@
+{
+  "name": "@eleith-pi/web-fetch",
+  "version": "0.0.0",
+  "private": false,
+  "description": "Focused browser-fingerprinted web fetching for Pi",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eleith/pi-extensions.git",
+    "directory": "extensions/web-fetch"
+  },
+  "files": [
+    "dist/index.js",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@earendil-works/* --external:typebox --external:wreq-js --external:defuddle/* --external:linkedom",
+    "prepack": "pnpm build",
+    "lint": "oxlint --deny-warnings --config ../../.oxlintrc.json src",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "defuddle": "0.19.4",
+    "linkedom": "0.18.13",
+    "wreq-js": "3.2.0"
+  },
+  "devDependencies": {
+    "@eleith/pi-internal": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}

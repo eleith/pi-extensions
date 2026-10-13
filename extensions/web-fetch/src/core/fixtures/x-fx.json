@@ -1,0 +1,10 @@
+{
+  "tweet": {
+    "text": "A complete offline tweet with a useful link.",
+    "author": { "screen_name": "fixture", "name": "Fixture Author" },
+    "created_at": "2026-01-02T03:04:05Z",
+    "url": "https://x.com/fixture/status/12345",
+    "entities": [],
+    "media": { "all": [] }
+  }
+}

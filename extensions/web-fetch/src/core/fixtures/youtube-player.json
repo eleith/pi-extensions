@@ -1,0 +1,14 @@
+{
+  "videoDetails": { "videoId": "fixture123", "author": "Fixture Channel" },
+  "captions": {
+    "playerCaptionsTracklistRenderer": {
+      "captionTracks": [
+        {
+          "languageCode": "en",
+          "name": { "simpleText": "English" },
+          "baseUrl": "https://www.youtube.com/api/timedtext?v=fixture123"
+        }
+      ]
+    }
+  }
+}

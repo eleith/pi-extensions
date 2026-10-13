@@ -1,0 +1,32 @@
+<html>
+  <body>
+    <section>
+      <h2>Post</h2>
+      <div data-testid="cellInnerDiv">
+        <article data-testid="tweet">
+          <div data-testid="User-Name">
+            <a href="/fixture">Fixture Author</a><a href="/fixture">@fixture</a>
+          </div>
+          <a href="/fixture/status/22222"><time datetime="2026-01-02T00:00:00Z">January 2</time></a>
+          <div data-testid="tweetText">Main offline thread post.</div>
+        </article>
+      </div>
+      <div data-testid="cellInnerDiv">
+        <article data-testid="tweet">
+          <div data-testid="User-Name">
+            <a href="/fixture">Fixture Author</a><a href="/fixture">@fixture</a>
+          </div>
+          <div data-testid="tweetText">Self-reply remains part of the post.</div>
+        </article>
+      </div>
+      <div data-testid="cellInnerDiv">
+        <article data-testid="tweet">
+          <div data-testid="User-Name">
+            <a href="/reader">Fixture Reader</a><a href="/reader">@reader</a>
+          </div>
+          <div data-testid="tweetText">Other-author reply can be excluded.</div>
+        </article>
+      </div>
+    </section>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "author_name": "Fixture Author",
+  "author_url": "https://twitter.com/fixture",
+  "html": "<blockquote><p>An offline oEmbed tweet with <a href='https://example.test/guide'>a guide</a>.</p><a href='https://twitter.com/fixture/status/12346'>January 2</a></blockquote>"
+}

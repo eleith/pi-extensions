@@ -1,0 +1,28 @@
+{
+  "playerOverlays": {
+    "playerOverlayRenderer": {
+      "decoratedPlayerBarRenderer": {
+        "decoratedPlayerBarRenderer": {
+          "playerBar": {
+            "multiMarkersPlayerBarRenderer": {
+              "markersMap": [
+                {
+                  "value": {
+                    "chapters": [
+                      {
+                        "chapterRenderer": {
+                          "title": { "simpleText": "Fixture chapter" },
+                          "timeRangeStartMillis": 0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

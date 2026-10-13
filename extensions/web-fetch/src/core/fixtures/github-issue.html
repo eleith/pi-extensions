@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Offline issue · fixtures/project</title>
+    <meta name="expected-hostname" content="github.com" />
+  </head>
+  <body>
+    <h1 data-testid="issue-title">Offline issue</h1>
+    <div data-testid="issue-viewer-issue-container">
+      <a data-testid="issue-body-header-author" href="/issue_author">issue_author</a>
+      <relative-time datetime="2026-01-01T00:00:00Z"></relative-time>
+      <div data-testid="issue-body-viewer">
+        <div class="markdown-body">
+          <p>Original issue content must remain.</p>
+          <hr />
+          <h2>Comments</h2>
+          <p>Legitimate authored Comments section remains part of the issue.</p>
+          <pre><code>const example = "## Comments";</code></pre>
+        </div>
+      </div>
+    </div>
+    <div data-wrapper-timeline-id="comment-1">
+      <div class="react-issue-comment">
+        <a data-testid="avatar-link" href="/reply_author">reply_author</a>
+        <relative-time datetime="2026-01-02T00:00:00Z"></relative-time>
+        <div class="markdown-body"><p>Actual issue reply can be excluded.</p></div>
+      </div>
+    </div>
+  </body>
+</html>
