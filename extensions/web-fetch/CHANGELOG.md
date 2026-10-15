@@ -1,14 +1,11 @@
-# Changelog
+# @eleith-pi/web-fetch
 
-## Unreleased
+## 0.1.0
 
-- Add focused browser-fingerprinted `web_fetch` and `web_fetch_batch` tools with markdown, html, json, and raw output formats, readable extraction, streamed temporary downloads, and bounded ordered batches.
-- Provide overridable default framed rendering without changing tool execution or model-facing results.
-- Add the shared prefixed web-fetch command with on/off/toggle controls for both tools and test [URL] through the normal agent/tool pipeline.
-- Adapt MIT-licensed pi-smart-fetch 0.3.17 with current wreq-js, Defuddle, and Linkedom; remove compatibility-only options, custom transport/header configuration, filename/MIME database machinery, global console interception, and fabricated HTTP statuses.
-- Delegate site-specific extraction and reply filtering to Defuddle; remove inherited site-label and comment-section cleanup.
-- Remove the secondary DOM cleaner/Markdown converter; retain navigation hints and suggest raw when extraction fails.
-- Share lightweight initial request validation and return bounded extractor responses directly, without body-method interception.
-- Drop the text output mode and handwritten Markdown-to-text conversion; plain-text inputs remain supported.
-- Validate JSON without pretty-printing or reserializing; preserve source numbers, duplicate keys and whitespace, and remove the indentation-expansion guard.
-- Document best-effort native cancellation and accepted-data limits without claiming immediate network shutdown.
+### Minor Changes
+
+- Introduce `web_fetch` and `web_fetch_batch` with browser-fingerprinted requests, Defuddle extraction, markdown/html/json/raw output, temporary downloads, and bounded ordered batches.
+- Add externally overridable default framed rendering and shared-prefix on/off/toggle controls with test [URL] through the ordinary agent/tool pipeline.
+- Preserve JSON source without reserialization. Delegate site-specific extraction, conversion, and reply filtering to Defuddle.
+- Adapt MIT-licensed pi-smart-fetch 0.3.17 with wreq-js 3.2.0, Defuddle 0.19.4, and Linkedom 0.18.13. Preserve upstream attribution.
+- Cancellation is best-effort at the native transport boundary; accepted-data limits do not promise immediate native network shutdown or hard native-memory limits.

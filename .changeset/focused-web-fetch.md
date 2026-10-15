@@ -1,5 +1,0 @@
----
-"@eleith-pi/web-fetch": minor
----
-
-Add focused browser-fingerprinted web_fetch and web_fetch_batch tools with readable extraction, markdown/html/json/raw output formats, streamed temporary downloads, bounded ordered batches, externally overridable default chrome, and the shared-prefix on/off/toggle command for both tools with test [URL] through the normal agent/tool pipeline. Preserve pi-smart-fetch's MIT attribution while updating its core dependencies and removing unused compatibility/configuration machinery. Defuddle owns extraction, conversion and reply filtering; there is no secondary DOM cleaner/Markdown converter. Navigation recovery remains, and failed extraction suggests an explicit raw retry. Omit the plain-text output mode and handwritten Markdown parser while continuing to accept plain-text responses. Validate and retain JSON source instead of pretty-printing it or maintaining an expansion guard. Cancellation remains explicitly best-effort at the native transport boundary.
