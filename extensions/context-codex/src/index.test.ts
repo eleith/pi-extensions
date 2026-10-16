@@ -105,12 +105,12 @@ it("wires restore/reconcile hooks without provider calls for an unsupported mode
     "session_tree",
     "model_select",
     "input",
-    "before_agent_start",
     "session_shutdown",
   ])
     await context.emit(event);
   expect(context.pi.setModel).not.toHaveBeenCalled();
   expect(context.pi.appendEntry).not.toHaveBeenCalled();
+  expect(context.pi.on.mock.calls.map(([name]) => name)).not.toContain("before_agent_start");
 });
 
 it("fails invalid prefix settings before registering any capabilities", async () => {

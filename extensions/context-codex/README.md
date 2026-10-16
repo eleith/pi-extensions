@@ -25,6 +25,11 @@ branch preferences persist across reloads. the catalog baseline is not guessed:
 missing baselines are reported, and models already at or above the verified window
 get a no-extension notice rather than a smaller window.
 
+preference replay only runs while Pi is idle. after tree navigation it waits for
+normal user input, before Pi checks compaction. custom-message-triggered turns use
+the current window without replaying pending preferences; explicit extend/restore
+commands also require idle.
+
 ### migrate
 
 run `/eleith:context restore` with the old extension loaded before removing it:
