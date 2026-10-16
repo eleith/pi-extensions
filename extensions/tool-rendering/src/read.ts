@@ -39,9 +39,16 @@ export function buildReadRendering(): Pick<
   return { renderShell: "self", renderCall, renderResult };
 }
 
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value === "string" && value.trim() !== "") value = Number(value);
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
 function readTitle(args: ReadToolInput, theme: ReadTheme): string {
-  const offset = args.offset ? ` ${theme.fg("muted", `from ${args.offset}`)}` : "";
-  const limit = args.limit ? ` ${theme.fg("muted", `(${args.limit} lines)`)}` : "";
+  const start = positiveInteger(args.offset);
+  const count = positiveInteger(args.limit);
+  const offset = start ? ` ${theme.fg("muted", `from ${start}`)}` : "";
+  const limit = count ? ` ${theme.fg("muted", `(${count} lines)`)}` : "";
   return `${theme.fg("toolTitle", theme.bold("read"))} ${theme.fg("accent", args.path ?? "")}${offset}${limit}`;
 }
 
@@ -70,7 +77,7 @@ function renderReadResult(
   const { shown, hidden } = previewLines(lines, expanded, 10);
   const truncation = result.details?.truncation ? " · truncated" : "";
   const summary = `${lines.length} lines${truncation}`;
-  const body = renderNumberedLines(shown, context.args.offset ?? 1, theme);
+  const body = renderNumberedLines(shown, positiveInteger(context.args.offset) ?? 1, theme);
   return frameResultWithBottomLabel(
     body,
     resultLabel(summary, expanded, hidden, theme),

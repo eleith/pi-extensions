@@ -213,6 +213,54 @@ it.each(names)("keeps bounded collapsed %s previews and full expanded content", 
   );
 });
 
+it.each([
+  { offset: 10, limit: 2, title: "read file.txt from 10 (2 lines)", first: 10 },
+  { offset: "10", limit: "2", title: "read file.txt from 10 (2 lines)", first: 10 },
+  { offset: " 10 ", limit: " 2 ", title: "read file.txt from 10 (2 lines)", first: 10 },
+  { offset: null, limit: "2", title: "read file.txt (2 lines)", first: 1 },
+  { offset: "10", limit: null, title: "read file.txt from 10", first: 10 },
+  { offset: undefined, limit: undefined, title: "read file.txt", first: 1 },
+])(
+  "normalizes read ranges for offset=$offset and limit=$limit",
+  ({ offset, limit, title, first }) => {
+    const tool = erased(capture("read").tool);
+    const args = { path: "file.txt", offset, limit };
+    const ctx = context(args);
+    expect(text(tool.renderCall!(args, theme, ctx))).toContain(title);
+    const result = {
+      content: [{ type: "text" as const, text: "first\nsecond" }],
+      details: undefined,
+    };
+    const output = text(tool.renderResult!(result, options, theme, ctx));
+    expect(
+      output
+        .split("\n")
+        .slice(0, 2)
+        .map((line) => line.trimStart()),
+    ).toEqual([`${first} │ first`, `${first + 1} │ second`]);
+  },
+);
+
+it.each(["", " ", "invalid", NaN, Infinity, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, true, {}, []])(
+  "omits malformed read ranges %j without corrupting line numbers",
+  (value) => {
+    const tool = erased(capture("read").tool);
+    const args = { path: "file.txt", offset: value, limit: value };
+    const ctx = context(args);
+    const title = text(tool.renderCall!(args, theme, ctx));
+    expect(title).toContain("read file.txt");
+    expect(title).not.toContain("from");
+    expect(title).not.toContain("lines)");
+    const result = {
+      content: [{ type: "text" as const, text: "first\nsecond" }],
+      details: undefined,
+    };
+    const output = text(tool.renderResult!(result, options, theme, ctx));
+    expect(output).toContain("  1 │ first");
+    expect(output).toContain("  2 │ second");
+  },
+);
+
 it("numbers read offsets using the maximum displayed number and preserves image/truncation labels", () => {
   const { tool } = capture("read");
   const ctx = context(presets.read.args);
