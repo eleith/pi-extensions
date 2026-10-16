@@ -43,6 +43,7 @@ export type ErrorCode =
   | "network"
   | "http"
   | "extraction"
+  | "invalid_json"
   | "download"
   | "unavailable";
 export interface FailureResult {

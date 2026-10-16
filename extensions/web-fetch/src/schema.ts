@@ -99,6 +99,7 @@ export const fetchOutputSchema = Type.Union([
           "network",
           "http",
           "extraction",
+          "invalid_json",
           "download",
           "unavailable",
         ].map((code) => Type.Literal(code)),

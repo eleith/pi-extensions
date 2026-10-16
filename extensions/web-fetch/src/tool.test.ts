@@ -157,6 +157,28 @@ it("returns matching structured data and real Pi errors without native credentia
   expect(noStatus.structuredContent).not.toHaveProperty("statusCode");
   expect(noStatus.content[0]).toMatchObject({ text: expect.not.stringContaining("HTTP") });
 });
+it("allowlists JSON diagnostics in single and batch output without exposing exception text", async () => {
+  const invalidJson: FetchResult = {
+    kind: "error",
+    url: "https://example.test",
+    code: "invalid_json",
+    message: "native parser secret: Authorization=credential",
+  };
+  const message = "Response is not valid JSON. Retry with format raw to inspect the response body.";
+  mocks.single.mockResolvedValue(invalidJson);
+  mocks.batch.mockResolvedValue(batch([invalidJson]));
+  const single = await fetchTool({ url: invalidJson.url, format: "json" });
+  const multiple = await batchTool({ requests: [{ url: invalidJson.url, format: "json" }] });
+  expect(single.structuredContent).toMatchObject({ code: "invalid_json", message });
+  expect(multiple.structuredContent).toMatchObject({ items: [{ code: "invalid_json", message }] });
+  for (const result of [single, multiple]) {
+    expect(result.isError).toBe(true);
+    expect(result.content[0]).toMatchObject({ text: expect.stringContaining(message) });
+    expect(JSON.stringify(result)).not.toContain("credential");
+  }
+  assertSchema(fetchOutputSchema, single.structuredContent);
+  assertSchema(batchOutputSchema, multiple.structuredContent);
+});
 it("retains ordered items and marks only cancelled or all-failed batches as Pi errors", async () => {
   for (const [outcome, isError] of [
     [batch([content(), error]), false],

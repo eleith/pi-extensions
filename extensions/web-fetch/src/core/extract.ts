@@ -8,6 +8,7 @@ import {
   renderJsonContent,
 } from "./format.ts";
 import type { ContentResult, FetchInput } from "./types.ts";
+import { TransportError } from "./transport.ts";
 
 export { inspectHtml } from "./dom.ts";
 
@@ -105,7 +106,8 @@ export async function extractContent(
       JSON.parse(source); // Validate only; reserializing would change numbers, keys and whitespace.
       jsonBody = source;
     } catch {
-      if (declaredJson || format === "json") throw new Error("Response is not valid JSON.");
+      if (declaredJson || format === "json")
+        throw new TransportError("invalid_json", "Response is not valid JSON.");
       // A brace at the start of plain text is not sufficient evidence of JSON.
     }
     if (jsonBody !== undefined) {

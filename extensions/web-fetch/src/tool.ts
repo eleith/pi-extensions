@@ -37,6 +37,7 @@ const messages: Record<ErrorCode, string> = {
   http: "HTTP request failed.",
   extraction:
     "Readable content could not be extracted. Retry with format raw or browser automation.",
+  invalid_json: "Response is not valid JSON. Retry with format raw to inspect the response body.",
   download: "Download could not be saved.",
   unavailable:
     "Native fetch dependencies are unavailable; check the package installation and supported platform.",

@@ -190,6 +190,7 @@ export async function executeFetch(
         );
       }
       let original: ContentResult | undefined;
+      let jsonFailure: TransportError | undefined;
       try {
         if (request.format !== "raw") hooks.onProgress?.({ phase: "extracting" });
         original = await awaitOwned(
@@ -207,6 +208,7 @@ export async function executeFetch(
         context.check();
       } catch (error) {
         throwIfRecoveryMustStop(error, context);
+        if (error instanceof TransportError && error.code === "invalid_json") jsonFailure = error;
       }
       for (const source of sourceCandidates(sources, original)) {
         try {
@@ -222,6 +224,7 @@ export async function executeFetch(
             "A redirect or alternate source was unavailable; retained readable original content.",
           );
       }
+      if (!original && jsonFailure) throw jsonFailure;
       if (!original || (!original.content.trim() && request.format !== "raw"))
         throw new TransportError(
           "extraction",
