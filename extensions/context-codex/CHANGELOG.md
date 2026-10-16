@@ -1,5 +1,11 @@
 # @eleith-pi/context-codex
 
+## 0.1.1
+
+### Patch Changes
+
+- 7f9868d: Remove the ineffective before_agent_start preference replay fallback on Pi 1.2+ and document idle-only reconciliation. Custom-triggered turns retain the current window; pending branch preferences replay on normal idle input before compaction.
+
 ## 0.1.0
 
 ### Minor Changes

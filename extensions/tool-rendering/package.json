@@ -1,6 +1,6 @@
 {
   "name": "@eleith-pi/tool-rendering",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": false,
   "description": "Consistent minimal frames for Pi's built-in tools",
   "keywords": [

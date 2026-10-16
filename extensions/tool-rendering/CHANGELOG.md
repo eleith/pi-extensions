@@ -1,5 +1,11 @@
 # @eleith-pi/tool-rendering
 
+## 0.1.5
+
+### Patch Changes
+
+- 8cee611: Normalize numeric-string read offsets and limits in custom rendering, and omit malformed range hints without corrupting line numbers.
+
 ## 0.1.4
 
 ### Patch Changes
