@@ -1,6 +1,6 @@
 {
   "name": "@eleith-pi/web-fetch",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Focused browser-fingerprinted web fetching for Pi",
   "keywords": [

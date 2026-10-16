@@ -1,5 +1,11 @@
 # @eleith-pi/web-fetch
 
+## 0.1.1
+
+### Patch Changes
+
+- a089118: Report invalid JSON with a specific, safe diagnostic and raw-retry guidance while preserving alternate-source recovery.
+
 ## 0.1.0
 
 ### Minor Changes
