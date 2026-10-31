@@ -83,7 +83,7 @@ describe("context status windows", () => {
     };
     const original = structuredClone(current);
     const report = formatContextStatus(current, NOW);
-    expect(report).toContain("context-codex · openai-codex/gpt-6-sol");
+    expect(report).toContain("codex · openai-codex/gpt-6-sol");
     expect(report).toMatch(/^    Usage +12k \/ 922k$/m);
     expect(report).toMatch(/^    Standard +272k$/m);
     expect(report).toMatch(/^    Extended +922k \(local window\)$/m);

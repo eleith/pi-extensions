@@ -19,13 +19,13 @@ import {
   type ExtensionContext,
   type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
-import contextCodex from "./index.ts";
+import codex from "./index.ts";
 
 const directory = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const directory = mkdtempSync(join(tmpdir(), "context-codex-sdk-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "codex-sdk-test-"));
   vi.stubEnv("PI_CODING_AGENT_DIR", directory);
   vi.stubEnv("PI_OFFLINE", "1");
   return directory;
@@ -97,7 +97,7 @@ async function fixture(window = 272_000, modelId = "gpt-6-sol") {
     noThemes: true,
     noContextFiles: true,
     extensionFactories: [
-      contextCodex,
+      codex,
       (pi) => {
         pi.on("model_select", modelSelect);
         pi.on("input", (_event, ctx) => {
@@ -180,7 +180,7 @@ it.each([
     const original = structuredClone(f.catalog);
     try {
       const leaf = f.manager.getLeafId();
-      await f.session.prompt("/eleith:context-codex extend");
+      await f.session.prompt("/eleith:codex extend");
       const extended = f.session.model!;
       expect(extended.contextWindow).toBe(Math.max(window, 922_000));
       if (window < 922_000) {
@@ -194,7 +194,7 @@ it.each([
       await f.session.reload();
       expect(f.session.model?.contextWindow).toBe(Math.max(window, 922_000));
       expect(f.registry.find("openai-codex", modelId)?.contextWindow).toBe(window);
-      await f.session.prompt("/eleith:context-codex restore");
+      await f.session.prompt("/eleith:codex restore");
       expect(f.session.model?.contextWindow).toBe(window);
       expect(extended.contextWindow).toBe(Math.max(window, 922_000));
       expect(f.catalog).toEqual(original);
@@ -215,6 +215,23 @@ it.each([
     }
   },
 );
+
+it("SDK replays a saved context preference after the command rename", async () => {
+  const f = await fixture();
+  const saved = { provider: "openai-codex", modelId: "gpt-6-sol", extended: true };
+  try {
+    f.manager.appendCustomEntry("eleith-context", saved);
+    await f.session.reload();
+    expect(f.session.model?.contextWindow).toBe(922_000);
+    expect(f.preferences()).toEqual([saved]);
+
+    await f.session.prompt("/eleith:codex restore");
+    expect(f.session.model?.contextWindow).toBe(272_000);
+    expect(f.preferences()).toEqual([saved, { ...saved, extended: false }]);
+  } finally {
+    await f.cleanup();
+  }
+});
 
 it.each(["rename", "external"])(
   "SDK delayed auth with %s warns without repair, thinking rewrite, success records, or replay",
@@ -240,7 +257,7 @@ it.each(["rename", "external"])(
       });
     const selection = vi.spyOn(f.session, "setModel");
     try {
-      const request = f.session.prompt("/eleith:context-codex extend");
+      const request = f.session.prompt("/eleith:codex extend");
       await started;
       const submitted = selection.mock.calls[0][0];
       const originalSubmitted = structuredClone(submitted);
@@ -267,7 +284,7 @@ it.each(["rename", "external"])(
       expect(thinkingWrites).not.toHaveBeenCalled();
       expect(f.session.thinkingLevel).toBe(thinking);
       // Only an explicit context-changing command resumes work.
-      await f.session.prompt("/eleith:context-codex restore");
+      await f.session.prompt("/eleith:codex restore");
       expect(f.session.model?.contextWindow).toBe(272_000);
       expect(f.preferences()).toEqual([
         { provider: "openai-codex", modelId: "gpt-6-sol", extended: false },
@@ -287,14 +304,14 @@ it.each(["missing", "endpoint"])(
   async (reason) => {
     const f = await fixture();
     try {
-      await f.session.prompt("/eleith:context-codex extend");
+      await f.session.prompt("/eleith:codex extend");
       const lookup = vi
         .spyOn(f.registry, "find")
         .mockReturnValue(
           reason === "missing" ? undefined : { ...f.catalog, baseUrl: "https://different.invalid" },
         );
       const select = vi.spyOn(f.session, "setModel");
-      await f.session.prompt("/eleith:context-codex restore");
+      await f.session.prompt("/eleith:codex restore");
       expect(select).not.toHaveBeenCalled();
       expect(f.session.model?.contextWindow).toBe(922_000);
       expect(f.confirm).not.toHaveBeenCalled();
@@ -342,9 +359,9 @@ it.each(["user", "custom"] as const)(
       return stream;
     });
     try {
-      await f.session.prompt("/eleith:context-codex extend");
+      await f.session.prompt("/eleith:codex extend");
       const extendedLeaf = f.manager.getLeafId()!;
-      await f.session.prompt("/eleith:context-codex restore");
+      await f.session.prompt("/eleith:codex restore");
       expect(f.session.model?.contextWindow).toBe(272_000);
       expect(f.confirm).toHaveBeenCalledTimes(1);
 

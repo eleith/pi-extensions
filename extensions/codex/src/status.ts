@@ -90,7 +90,7 @@ export function formatContextStatus(status: ContextStatus, now = Date.now()): st
   const { model, usage, standardWindow, extendedWindow, branch, desiredExtended, replayPaused } =
     status;
   const lines = [
-    `context-codex · ${modelKey(model)}`,
+    `codex · ${modelKey(model)}`,
     "",
     "  window",
     row(

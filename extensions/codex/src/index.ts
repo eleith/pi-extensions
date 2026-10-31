@@ -3,9 +3,9 @@ import { registerCommand } from "@eleith/pi-internal/commands";
 import { getSettings } from "@eleith/pi-internal/config";
 import { ContextController } from "./controller.ts";
 
-export default async function contextCodex(pi: ExtensionAPI): Promise<void> {
+export default async function codex(pi: ExtensionAPI): Promise<void> {
   const settings = await getSettings();
-  const commandName = `${settings.commandPrefix}:context-codex`;
+  const commandName = `${settings.commandPrefix}:codex`;
   const controller = new ContextController(pi, commandName);
 
   registerCommand(pi, {

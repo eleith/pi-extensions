@@ -145,7 +145,7 @@ function fixture(catalog = model()) {
       state.branch.push(entry(data, customType));
     }),
   } satisfies ContextAPI;
-  const controller = new ContextController(api, "personal:context-codex");
+  const controller = new ContextController(api, "personal:codex");
   return {
     catalog,
     state,
@@ -794,7 +794,7 @@ describe("ContextController", () => {
     const f = fixture();
     await f.controller.handle("extend", f.ctx);
     f.controller.shutdown();
-    const controller = new ContextController(f.api, "personal:context-codex");
+    const controller = new ContextController(f.api, "personal:codex");
     await controller.restore(f.ctx);
     expect(f.state.current?.contextWindow).toBe(922_000);
     await controller.handle("restore", f.ctx);

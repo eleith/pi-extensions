@@ -2,13 +2,13 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { afterAll, expect, it, vi } from "vitest";
-import contextCodex from "./index.ts";
+import codex from "./index.ts";
 
 const directory = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const directory = mkdtempSync(join(tmpdir(), "context-codex-test-"));
+  const directory = mkdtempSync(join(tmpdir(), "codex-test-"));
   vi.stubEnv("PI_CODING_AGENT_DIR", directory);
   vi.stubEnv("PI_OFFLINE", "1");
   return directory;
@@ -52,7 +52,7 @@ async function load(prefix = "eleith") {
     ui: { notify, confirm: vi.fn(async () => false) },
     sessionManager: { getBranch: () => [], getSessionId: () => "session", getLeafId: () => null },
   } as unknown as ExtensionCommandContext;
-  await contextCodex(pi as unknown as ExtensionAPI);
+  await codex(pi as unknown as ExtensionAPI);
   return {
     pi,
     ctx,
@@ -75,7 +75,7 @@ it("registers only the configured native command once after binding", async () =
   await context.emit("session_start");
   await context.emit("session_start");
   expect(context.pi.registerCommand).toHaveBeenCalledTimes(1);
-  expect(context.pi.registerCommand.mock.calls[0]?.[0]).toBe("personal:context-codex");
+  expect(context.pi.registerCommand.mock.calls[0]?.[0]).toBe("personal:codex");
   expect(await context.command().getArgumentCompletions?.("e")).toEqual([
     { value: "extend", label: "extend" },
   ]);
@@ -93,7 +93,7 @@ it("handles no argument as status rather than an invalid default action", async 
   expect(context.pi.setModel).not.toHaveBeenCalled();
   await context.command().handler("extend restore", context.ctx);
   expect(context.notify).toHaveBeenLastCalledWith(
-    "Usage: /eleith:context-codex [extend|restore]",
+    "Usage: /eleith:codex [extend|restore]",
     "warning",
   );
 });
@@ -117,7 +117,7 @@ it("fails invalid prefix settings before registering any capabilities", async ()
   writeFileSync(configPath, '{"commandPrefix":"Invalid Prefix"}');
   const on = vi.fn(),
     registerCommand = vi.fn();
-  await expect(contextCodex({ on, registerCommand } as unknown as ExtensionAPI)).rejects.toThrow(
+  await expect(codex({ on, registerCommand } as unknown as ExtensionAPI)).rejects.toThrow(
     configPath,
   );
   expect(on).not.toHaveBeenCalled();
