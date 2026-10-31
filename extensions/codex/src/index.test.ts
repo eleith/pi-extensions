@@ -3,6 +3,12 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { afterAll, expect, it, vi } from "vitest";
 import codex from "./index.ts";
+import { fetchCodexUsage } from "./client.ts";
+
+vi.mock("./client.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./client.ts")>()),
+  fetchCodexUsage: vi.fn(),
+}));
 
 const directory = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
@@ -21,6 +27,7 @@ afterAll(() => {
 });
 
 async function load(prefix = "eleith") {
+  vi.mocked(fetchCodexUsage).mockReset();
   writeFileSync(configPath, JSON.stringify({ commandPrefix: prefix }));
   type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
   type Listener = (
@@ -49,6 +56,7 @@ async function load(prefix = "eleith") {
     hasUI: false,
     isIdle: () => true,
     getContextUsage: () => undefined,
+    modelRegistry: {},
     ui: { notify, confirm: vi.fn(async () => false) },
     sessionManager: { getBranch: () => [], getSessionId: () => "session", getLeafId: () => null },
   } as unknown as ExtensionCommandContext;
@@ -82,6 +90,7 @@ it("registers only the configured native command once after binding", async () =
   expect(await context.command().getArgumentCompletions?.("")).toEqual([
     { value: "extend", label: "extend" },
     { value: "restore", label: "restore" },
+    { value: "usage", label: "usage" },
   ]);
 });
 
@@ -93,7 +102,7 @@ it("handles no argument as status rather than an invalid default action", async 
   expect(context.pi.setModel).not.toHaveBeenCalled();
   await context.command().handler("extend restore", context.ctx);
   expect(context.notify).toHaveBeenLastCalledWith(
-    "Usage: /eleith:codex [extend|restore]",
+    "Usage: /eleith:codex [extend|restore|usage]",
     "warning",
   );
 });
@@ -111,7 +120,49 @@ it("wires restore/reconcile hooks without provider calls for an unsupported mode
   expect(context.pi.setModel).not.toHaveBeenCalled();
   expect(context.pi.appendEntry).not.toHaveBeenCalled();
   expect(context.pi.on.mock.calls.map(([name]) => name)).not.toContain("before_agent_start");
+  expect(fetchCodexUsage).not.toHaveBeenCalled();
 });
+
+it("routes usage through the configured command without requiring an idle Codex selection", async () => {
+  const context = await load("personal");
+  vi.mocked(fetchCodexUsage).mockResolvedValue({ plan_type: "plus" });
+  await context.emit("session_start");
+  await context.command().handler("usage extra", context.ctx);
+  expect(fetchCodexUsage).not.toHaveBeenCalled();
+  context.notify.mockClear();
+  await context.command().handler("usage", { ...context.ctx, isIdle: () => false });
+  expect(fetchCodexUsage).toHaveBeenCalledExactlyOnceWith(
+    context.ctx.modelRegistry,
+    expect.any(AbortSignal),
+  );
+  expect(context.notify).toHaveBeenCalledExactlyOnceWith(
+    expect.stringContaining("Plan: plus"),
+    "info",
+  );
+  expect(context.pi.setModel).not.toHaveBeenCalled();
+  expect(context.pi.appendEntry).not.toHaveBeenCalled();
+});
+
+it.each(["model_select", "session_tree", "session_shutdown"])(
+  "%s cancels a pending usage report instead of displaying a late reply",
+  async (event) => {
+    const context = await load();
+    let finish!: (value: unknown) => void;
+    vi.mocked(fetchCodexUsage).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await context.emit("session_start");
+    const request = context.command().handler("usage", context.ctx);
+    const signal = vi.mocked(fetchCodexUsage).mock.calls[0][1]!;
+    await context.emit(event);
+    expect(signal.aborted).toBe(true);
+    finish({ plan_type: "plus" });
+    await request;
+    expect(context.notify).not.toHaveBeenCalled();
+  },
+);
 
 it("fails invalid prefix settings before registering any capabilities", async () => {
   writeFileSync(configPath, '{"commandPrefix":"Invalid Prefix"}');

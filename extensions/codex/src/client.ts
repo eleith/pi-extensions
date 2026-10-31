@@ -1,4 +1,4 @@
-import type { Provider } from "@earendil-works/pi-ai";
+import type { AuthResult, Provider } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER = "openai-codex";
@@ -35,33 +35,13 @@ export async function fetchCodexUsage(
 ): Promise<unknown> {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), TIMEOUT_MS);
-  const operation = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
-  let received: Response | undefined;
+  const requestSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   try {
-    operation.throwIfAborted();
-    const headers = await accountHeaders(registry, operation);
-    operation.throwIfAborted();
-    const request = fetcher(USAGE_URL, {
-      method: "GET",
-      headers,
-      redirect: "error",
-      signal: operation,
-    }).then((response) => {
-      received = response;
-      // A late response from an adapter that ignored abort must not retain its body.
-      if (operation.aborted) {
-        discardBody(response);
-        operation.throwIfAborted();
-      }
-      return response;
-    });
-    const response = await cancellable(request, operation);
-    if (!response.ok) {
-      discardBody(response);
-      throw responseError(response);
-    }
-    const data = await readJson(response, operation);
-    operation.throwIfAborted();
+    requestSignal.throwIfAborted();
+    const headers = await resolveAccountHeaders(registry, requestSignal);
+    requestSignal.throwIfAborted();
+    const data = await requestUsage(headers, requestSignal, fetcher);
+    requestSignal.throwIfAborted();
     return data;
   } catch (error) {
     if (signal?.aborted)
@@ -74,15 +54,10 @@ export async function fetchCodexUsage(
   } finally {
     clearTimeout(timer);
     deadline.abort();
-    if (received && !received.bodyUsed) discardBody(received);
   }
 }
 
-function officialBase(url: string | undefined): boolean {
-  return url?.replace(/\/+$/, "") === BASE_URL;
-}
-
-async function accountHeaders(
+async function resolveAccountHeaders(
   registry: CodexAccountRegistry,
   signal: AbortSignal,
 ): Promise<Headers> {
@@ -103,42 +78,45 @@ async function accountHeaders(
   }
   if (!registry.isUsingOAuth(model)) throw authError();
 
-  let resolved: Awaited<ReturnType<CodexAccountRegistry["getProviderAuth"]>>;
+  let resolvedAuth: AuthResult | undefined;
   try {
-    // This public facade has no cancellation argument. Stop waiting on abort, but
-    // leave any in-flight refresh to Pi; its late result cannot start our request.
-    resolved = await cancellable(registry.getProviderAuth(PROVIDER), signal);
+    // Pi owns token refresh; aborting here only stops our wait for its result.
+    resolvedAuth = await waitWithAbort(registry.getProviderAuth(PROVIDER), signal);
   } catch {
     throw authError();
   }
   signal.throwIfAborted();
   // Pi's resolved source describes these credentials, unlike its availability snapshot.
-  if (!resolved || resolved.source !== "OAuth") throw authError();
+  if (!resolvedAuth || resolvedAuth.source !== "OAuth") throw authError();
   if (
     !officialBase(registry.getProvider(PROVIDER)?.baseUrl) ||
-    (resolved.auth.baseUrl !== undefined && !officialBase(resolved.auth.baseUrl))
+    (resolvedAuth.auth.baseUrl !== undefined && !officialBase(resolvedAuth.auth.baseUrl))
   ) {
     throw new CodexAccountError(
       "unsupported",
       "Account usage does not support endpoint overrides.",
     );
   }
-  const token = resolved.auth.apiKey;
-  if (!token) throw authError();
+  const accessToken = resolvedAuth.auth.apiKey;
+  if (!accessToken) throw authError();
   // Match Pi's legacy transport: token routing overrides configured account headers.
-  const accountId = tokenAccountId(token);
+  const accountId = tokenAccountId(accessToken);
   if (!accountId) throw authError();
   try {
     // Forward only the two credentials needed by this fixed endpoint, never
     // arbitrary provider headers or provider-scoped environment values.
     return new Headers({
       Accept: "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${accessToken}`,
       "ChatGPT-Account-Id": accountId,
     });
   } catch {
     throw authError();
   }
+}
+
+function officialBase(url: string | undefined): boolean {
+  return url?.replace(/\/+$/, "") === BASE_URL;
 }
 
 function tokenAccountId(token: string): string | undefined {
@@ -152,9 +130,9 @@ function tokenAccountId(token: string): string | undefined {
       return undefined;
     const claim = payload["https://api.openai.com/auth"];
     if (!claim || typeof claim !== "object" || !("chatgpt_account_id" in claim)) return undefined;
-    return typeof claim.chatgpt_account_id === "string" && claim.chatgpt_account_id.trim()
-      ? claim.chatgpt_account_id
-      : undefined;
+    const accountId = claim.chatgpt_account_id;
+    if (typeof accountId !== "string" || !accountId.trim()) return undefined;
+    return accountId;
   } catch {
     return undefined;
   }
@@ -165,6 +143,35 @@ function authError(): CodexAccountError {
     "auth",
     "Codex account access is unavailable. Check your Pi Codex login.",
   );
+}
+
+async function requestUsage(
+  headers: Headers,
+  requestSignal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<unknown> {
+  let receivedResponse: Response | undefined;
+  try {
+    const request = fetcher(USAGE_URL, {
+      method: "GET",
+      headers,
+      redirect: "error",
+      signal: requestSignal,
+    }).then((response) => {
+      receivedResponse = response;
+      // Fetch adapters can ignore abort and deliver a response after we stopped waiting.
+      if (requestSignal.aborted) {
+        discardBody(response);
+        requestSignal.throwIfAborted();
+      }
+      return response;
+    });
+    const response = await waitWithAbort(request, requestSignal);
+    if (!response.ok) throw responseError(response);
+    return await readJson(response, requestSignal);
+  } finally {
+    if (receivedResponse && !receivedResponse.bodyUsed) discardBody(receivedResponse);
+  }
 }
 
 function responseError(response: Response): CodexAccountError {
@@ -187,37 +194,42 @@ function discardBody(response: Response): void {
 }
 
 async function readJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  const bytes = await readResponseBytes(response, signal);
+  signal.throwIfAborted();
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return JSON.parse(text);
+  } catch {
+    throw new CodexAccountError("response", "Codex account service returned invalid JSON.");
+  }
+}
+
+async function readResponseBytes(response: Response, signal: AbortSignal): Promise<Uint8Array> {
   if (!response.body) throw new CodexAccountError("response", "Codex account response was empty.");
   const reader = response.body.getReader();
   const bytes = new Uint8Array(MAX_RESPONSE_BYTES);
-  let size = 0;
-  let finished = false;
+  let bytesRead = 0;
+  let fullyRead = false;
   try {
     for (;;) {
-      const { value, done } = await cancellable(reader.read(), signal);
+      const { value, done } = await waitWithAbort(reader.read(), signal);
       if (done) {
-        finished = true;
-        break;
+        fullyRead = true;
+        return bytes.subarray(0, bytesRead);
       }
-      if (value.byteLength > bytes.byteLength - size) {
+      if (value.byteLength > bytes.byteLength - bytesRead) {
         throw new CodexAccountError("response", "Codex account response was too large.");
       }
-      bytes.set(value, size);
-      size += value.byteLength;
-    }
-    try {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, size));
-      return JSON.parse(text);
-    } catch {
-      throw new CodexAccountError("response", "Codex account service returned invalid JSON.");
+      bytes.set(value, bytesRead);
+      bytesRead += value.byteLength;
     }
   } finally {
-    if (!finished) void reader.cancel().catch(() => {});
+    if (!fullyRead) void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }
 
-async function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+async function waitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
     // The operation has already started; observe a late rejection without accepting its result.
     void promise.catch(() => {});
