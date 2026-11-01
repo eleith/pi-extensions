@@ -3,7 +3,11 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER = "openai-codex";
 const BASE_URL = "https://chatgpt.com/backend-api";
-const USAGE_URL = `${BASE_URL}/wham/usage`;
+const ACCOUNT_URLS = {
+  usage: `${BASE_URL}/wham/usage`,
+  catalog: `${BASE_URL}/codex/models?client_version=0.162.0`,
+} as const;
+type AccountResource = keyof typeof ACCOUNT_URLS;
 const TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
@@ -28,10 +32,27 @@ export class CodexAccountError extends Error {
 }
 
 /** Read account data with Pi's existing login. Pi owns credential refresh and persistence. */
-export async function fetchCodexUsage(
+export function fetchCodexUsage(
   registry: CodexAccountRegistry,
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch,
+): Promise<unknown> {
+  return fetchAccountData("usage", registry, signal, fetcher);
+}
+
+export function fetchCodexModelCatalog(
+  registry: CodexAccountRegistry,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<unknown> {
+  return fetchAccountData("catalog", registry, signal, fetcher);
+}
+
+async function fetchAccountData(
+  resource: AccountResource,
+  registry: CodexAccountRegistry,
+  signal: AbortSignal | undefined,
+  fetcher: typeof fetch,
 ): Promise<unknown> {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), TIMEOUT_MS);
@@ -40,7 +61,7 @@ export async function fetchCodexUsage(
     requestSignal.throwIfAborted();
     const headers = await resolveAccountHeaders(registry, requestSignal);
     requestSignal.throwIfAborted();
-    const data = await requestUsage(headers, requestSignal, fetcher);
+    const data = await requestAccountJson(resource, headers, requestSignal, fetcher);
     requestSignal.throwIfAborted();
     return data;
   } catch (error) {
@@ -73,7 +94,7 @@ async function resolveAccountHeaders(
   if (!officialBase(provider?.baseUrl) || !model) {
     throw new CodexAccountError(
       "unsupported",
-      "Account usage requires the official Codex provider.",
+      "Account requests require the official Codex provider.",
     );
   }
   if (!registry.isUsingOAuth(model)) throw authError();
@@ -94,7 +115,7 @@ async function resolveAccountHeaders(
   ) {
     throw new CodexAccountError(
       "unsupported",
-      "Account usage does not support endpoint overrides.",
+      "Account requests do not support endpoint overrides.",
     );
   }
   const accessToken = resolvedAuth.auth.apiKey;
@@ -145,14 +166,15 @@ function authError(): CodexAccountError {
   );
 }
 
-async function requestUsage(
+async function requestAccountJson(
+  resource: AccountResource,
   headers: Headers,
   requestSignal: AbortSignal,
   fetcher: typeof fetch,
 ): Promise<unknown> {
   let receivedResponse: Response | undefined;
   try {
-    const request = fetcher(USAGE_URL, {
+    const request = fetcher(ACCOUNT_URLS[resource], {
       method: "GET",
       headers,
       redirect: "error",

@@ -1,6 +1,6 @@
 import type { Api, AuthResult, Model } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
-import { fetchCodexUsage, type CodexAccountRegistry } from "./client.ts";
+import { fetchCodexModelCatalog, fetchCodexUsage, type CodexAccountRegistry } from "./client.ts";
 
 const BASE_URL = "https://chatgpt.com/backend-api";
 const model: Model<Api> = {
@@ -64,6 +64,30 @@ it("uses Pi's existing Codex auth for the fixed account endpoint", async () => {
     authorization: `Bearer ${f.auth.auth.apiKey}`,
     "chatgpt-account-id": "test-account",
   });
+});
+
+it("uses the same Pi credentials for the fixed versioned model catalog", async () => {
+  const f = fixture();
+  const catalog = { models: [{ slug: "future-model", service_tiers: [{ id: "priority" }] }] };
+  f.fetcher.mockResolvedValue(json(catalog));
+  expect(await fetchCodexModelCatalog(f.registry, undefined, f.fetcher)).toEqual(catalog);
+  expect(f.registry.getProviderAuth).toHaveBeenCalledExactlyOnceWith("openai-codex");
+  expect(f.fetcher).toHaveBeenCalledExactlyOnceWith(
+    `${BASE_URL}/codex/models?client_version=0.162.0`,
+    expect.objectContaining({ method: "GET", redirect: "error" }),
+  );
+  const headers = new Headers(f.fetcher.mock.calls[0][1]?.headers);
+  expect(headers.get("authorization")).toBe(`Bearer ${f.auth.auth.apiKey}`);
+  expect(headers.get("chatgpt-account-id")).toBe("test-account");
+});
+
+it("does not forward catalog credentials through an endpoint override", async () => {
+  const f = fixture();
+  f.auth.auth.baseUrl = "https://gateway.invalid";
+  await expect(fetchCodexModelCatalog(f.registry, undefined, f.fetcher)).rejects.toMatchObject({
+    code: "unsupported",
+  });
+  expect(f.fetcher).not.toHaveBeenCalled();
 });
 
 it("derives the account from the token like Pi's legacy Codex transport", async () => {
@@ -207,23 +231,29 @@ it("does not follow or display a redirected endpoint", async () => {
   expect(f.fetcher).toHaveBeenCalledOnce();
 });
 
-it("cancels a chunked response before retaining more than the byte limit", async () => {
-  const f = fixture();
-  const cancel = vi.fn();
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new Uint8Array(1024 * 1024));
-      controller.enqueue(new Uint8Array(1));
-    },
-    cancel,
-  });
-  f.fetcher.mockResolvedValue(new Response(body));
-  await expect(fetchCodexUsage(f.registry, undefined, f.fetcher)).rejects.toMatchObject({
-    code: "response",
-    message: "Codex account response was too large.",
-  });
-  expect(cancel).toHaveBeenCalledOnce();
-});
+it.each([
+  ["usage", fetchCodexUsage],
+  ["catalog", fetchCodexModelCatalog],
+] as const)(
+  "bounds chunked %s responses before retaining more than the byte limit",
+  async (_resource, fetchData) => {
+    const f = fixture();
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        controller.enqueue(new Uint8Array(1));
+      },
+      cancel,
+    });
+    f.fetcher.mockResolvedValue(new Response(body));
+    await expect(fetchData(f.registry, undefined, f.fetcher)).rejects.toMatchObject({
+      code: "response",
+      message: "Codex account response was too large.",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  },
+);
 
 it("reports invalid JSON without repeating returned content", async () => {
   const f = fixture();
@@ -321,16 +351,22 @@ it("bounds the wait for response headers", async () => {
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("keeps the deadline active while consuming the response body", async () => {
-  vi.useFakeTimers();
-  const f = fixture();
-  const cancel = vi.fn();
-  f.fetcher.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ cancel })));
-  const result = expect(fetchCodexUsage(f.registry, undefined, f.fetcher)).rejects.toMatchObject({
-    code: "timeout",
-  });
-  await vi.advanceTimersByTimeAsync(10_000);
-  await result;
-  expect(cancel).toHaveBeenCalledOnce();
-  expect(vi.getTimerCount()).toBe(0);
-});
+it.each([
+  ["usage", fetchCodexUsage],
+  ["catalog", fetchCodexModelCatalog],
+] as const)(
+  "keeps the deadline active while consuming the %s body",
+  async (_resource, fetchData) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const cancel = vi.fn();
+    f.fetcher.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({ cancel })));
+    const result = expect(fetchData(f.registry, undefined, f.fetcher)).rejects.toMatchObject({
+      code: "timeout",
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await result;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
