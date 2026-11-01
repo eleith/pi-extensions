@@ -9,6 +9,7 @@ interface CommandOptions {
   defaultAction: string;
   /** Only listed actions accept trailing input; preserve it verbatim (for URLs, etc.). */
   argumentActions?: readonly string[];
+  getArgumentCompletions?: NativeCommand["getArgumentCompletions"];
   handler(action: string, ctx: ExtensionCommandContext, argument?: string): void | Promise<void>;
 }
 
@@ -33,7 +34,8 @@ export function registerCommand(pi: ExtensionAPI, options: CommandOptions): void
 function createCommand(options: CommandOptions): NativeCommand {
   return {
     description: `${options.description} — ${commandUsage(options)}`,
-    getArgumentCompletions: (prefix) => completeActions(options.actions, prefix),
+    getArgumentCompletions:
+      options.getArgumentCompletions ?? ((prefix) => completeActions(options.actions, prefix)),
     handler: (args, ctx) => invokeCommand(options, args, ctx),
   };
 }

@@ -54,9 +54,33 @@ it.each(["sse", "websocket"] as const)(
       await openRealExtensionSession(runtime, model);
     try {
       const branch = structuredClone(manager.getBranch());
+      resolveAuth.mockClear();
+      await session.prompt("/eleith:codex");
+      expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Context:"), "info");
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Fast: Provider default (no override)"),
+        "info",
+      );
       await session.prompt("/eleith:codex fast");
-      await session.prompt("/eleith:codex fast status");
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Fast: Provider default (no override)"),
+        "info",
+      );
       expect(network.fetch).not.toHaveBeenCalled();
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(credentialWrites).not.toHaveBeenCalled();
+      expect(manager.getBranch()).toEqual(branch);
+      expect(modelTurns).not.toHaveBeenCalled();
+      await session.prompt("/eleith:codex fast status");
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining(
+          "Preference: inherit\nEligibility: unknown\nNext request policy: untouched",
+        ),
+        "info",
+      );
+      expect(network.fetch).not.toHaveBeenCalled();
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(credentialWrites).not.toHaveBeenCalled();
       expect(manager.getBranch()).toEqual(branch);
       expect(modelTurns).not.toHaveBeenCalled();
 
@@ -71,6 +95,10 @@ it.each(["sse", "websocket"] as const)(
         { provider: "openai-codex", modelId: model.id, mode: "on" },
       ]);
       expect(modelTurns).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Fast: On (priority requested)\nNo response tier reported yet."),
+        "info",
+      );
 
       resolveAuth.mockClear();
       await session.prompt("Reply with ok.");
@@ -92,18 +120,37 @@ it.each(["sse", "websocket"] as const)(
       const requests = network.fetch.mock.calls.length;
       resolveAuth.mockClear();
       const afterTurn = structuredClone(manager.getBranch());
-      for (const command of ["/eleith:codex fast status", "/eleith:codex fast"]) {
-        await session.prompt(command);
-        expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Preference: on"), "info");
-        expect(notify).toHaveBeenLastCalledWith(
-          expect.stringContaining("Last requested tier: priority"),
-          "info",
-        );
-        expect(notify).toHaveBeenLastCalledWith(
-          expect.stringContaining("Last observed tier: default"),
-          "info",
-        );
-      }
+      await session.prompt("/eleith:codex");
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Fast: On (priority requested)\nLast reported tier: Standard"),
+        "info",
+      );
+      expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Context:"), "info");
+      expect(network.fetch).toHaveBeenCalledTimes(requests);
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(manager.getBranch()).toEqual(afterTurn);
+      await session.prompt("/eleith:codex fast status");
+      expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Preference: on"), "info");
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Last requested tier: priority"),
+        "info",
+      );
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Last observed tier: default"),
+        "info",
+      );
+      expect(network.fetch).toHaveBeenCalledTimes(requests);
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(manager.getBranch()).toEqual(afterTurn);
+      expect(modelTurns).toHaveBeenCalledOnce();
+      expect(credentialWrites).not.toHaveBeenCalled();
+
+      await session.prompt("/eleith:codex fast");
+      expect(notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Fast: On (priority requested)\nLast reported tier: Standard"),
+        "info",
+      );
+      expect(notify).toHaveBeenLastCalledWith(expect.not.stringContaining("Preference:"), "info");
       expect(network.fetch).toHaveBeenCalledTimes(requests);
       expect(resolveAuth).not.toHaveBeenCalled();
       expect(manager.getBranch()).toEqual(afterTurn);
@@ -118,10 +165,8 @@ it.each(["sse", "websocket"] as const)(
 
 it("SDK replays the active fast branch alongside context controls, then off and reset change the wire", async () => {
   const network = installResponseTransports("sse");
-  const { runtime, model, credentialWrites, modelTurns } = await createOfflineModelRuntime(
-    "sse",
-    network.fetch,
-  );
+  const { runtime, model, credentialWrites, resolveAuth, modelTurns } =
+    await createOfflineModelRuntime("sse", network.fetch);
   const manager = SessionManager.inMemory(directory);
   const saved = { provider: "openai-codex", modelId: model.id, mode: "on" };
   const onLeaf = manager.appendCustomEntry(FAST_ENTRY, saved);
@@ -136,11 +181,29 @@ it("SDK replays the active fast branch alongside context controls, then off and 
   try {
     expect(network.fetch).not.toHaveBeenCalled();
     const branch = structuredClone(manager.getBranch());
+    resolveAuth.mockClear();
     await session.prompt("/eleith:codex fast");
-    await session.prompt("/eleith:codex fast status");
-    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Preference: on"), "info");
+    expect(notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("Fast: Paused — model eligibility needs checking"),
+      "info",
+    );
     expect(network.fetch).not.toHaveBeenCalled();
+    expect(resolveAuth).not.toHaveBeenCalled();
+    expect(credentialWrites).not.toHaveBeenCalled();
     expect(manager.getBranch()).toEqual(branch);
+    expect(modelTurns).not.toHaveBeenCalled();
+    await session.prompt("/eleith:codex fast status");
+    expect(notify).toHaveBeenLastCalledWith(
+      expect.stringContaining(
+        "Preference: on\nEligibility: unknown\nNext request policy: suspended",
+      ),
+      "info",
+    );
+    expect(network.fetch).not.toHaveBeenCalled();
+    expect(resolveAuth).not.toHaveBeenCalled();
+    expect(credentialWrites).not.toHaveBeenCalled();
+    expect(manager.getBranch()).toEqual(branch);
+    expect(modelTurns).not.toHaveBeenCalled();
 
     const outputLimit = session.model?.maxTokens;
     const thinking = session.thinkingLevel;
@@ -159,11 +222,19 @@ it("SDK replays the active fast branch alongside context controls, then off and 
     expect(confirm).not.toHaveBeenCalled();
 
     await session.prompt("/eleith:codex fast off");
+    expect(notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("Fast: Off (standard requested)"),
+      "info",
+    );
     expect(fastChoices(manager)).toEqual([saved, { ...saved, mode: "off" }]);
     await session.prompt("Reply with ok without priority.");
     expect(network.payloads[1]).toMatchObject({ model: model.id, service_tier: "default" });
 
     await session.prompt("/eleith:codex fast reset");
+    expect(notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("Fast: Provider default (no override)"),
+      "info",
+    );
     expect(fastChoices(manager)).toEqual([
       saved,
       { ...saved, mode: "off" },

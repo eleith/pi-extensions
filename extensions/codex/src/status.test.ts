@@ -1,7 +1,7 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ContextUsage, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { formatContextStatus } from "./status.ts";
+import { type ContextStatus, formatContextSummary } from "./status.ts";
 
 const NOW = Date.parse("2026-01-10T12:00:00Z");
 const model: Model<Api> = {
@@ -16,7 +16,7 @@ const model: Model<Api> = {
   contextWindow: 272_000,
   maxTokens: 128_000,
 };
-const status: Parameters<typeof formatContextStatus>[0] = {
+const status: ContextStatus = {
   model,
   usage: undefined,
   standardWindow: 272_000,
@@ -74,81 +74,258 @@ function compaction(id: string, timestamp: string, parentId: string | null = nul
   };
 }
 
-describe("context status windows", () => {
-  it("reports the selected model and local extended metadata without changing it", () => {
-    const current = {
+describe("context summary occupancy", () => {
+  it("uses the physical 128k window for a routed model advertising an extended 1m window", () => {
+    const report = formatContextSummary(
+      {
+        ...status,
+        model: { ...model, contextWindow: 1_000_000 },
+        extendedWindow: 1_000_000,
+        desiredExtended: true,
+        usage: { tokens: 120_000, contextWindow: 128_000, percent: 93.75 },
+      },
+      NOW,
+    );
+    expect(report.split("\n")[0]).toBe(
+      "Context: 120k / 128k tokens (effective) · Selected context window: 1m tokens (extended)",
+    );
+    expect(report).not.toContain("pending");
+  });
+
+  it.each([undefined, 0])(
+    "keeps known effective occupancy when the selected window is %s",
+    (contextWindow) => {
+      // A routed or persisted model may lack today's required window metadata.
+      const selected = { ...model, contextWindow } as unknown as Model<Api>;
+      const report = formatContextSummary(
+        {
+          ...status,
+          model: selected,
+          usage: { tokens: 120_000, contextWindow: 128_000, percent: 93.75 },
+        },
+        NOW,
+      );
+      expect(report.split("\n")[0]).toBe(
+        "Context: 120k / 128k tokens (effective) · Selected context window: unknown tokens (window unknown)",
+      );
+    },
+  );
+
+  it("provides three read-only local lines without a model header or fast hint", () => {
+    const current: ContextStatus = {
       ...status,
-      extendedWindow: 922_000,
-      usage: { tokens: 12_000, contextWindow: 922_000, percent: 1.3 },
+      usage: { tokens: 40_000, contextWindow: 272_000, percent: 14.7 },
+      branch: [
+        compaction("first", "2026-01-10T11:50:00Z"),
+        compaction("last", "2026-01-10T11:55:00Z", "first"),
+        message(assistant({ input: 10_000, cacheRead: 20_000 })),
+      ],
     };
     const original = structuredClone(current);
-    const report = formatContextStatus(current, NOW);
-    expect(report).toContain("codex · openai-codex/gpt-6-sol");
-    expect(report).toMatch(/^    Usage +12k \/ 922k$/m);
-    expect(report).toMatch(/^    Standard +272k$/m);
-    expect(report).toMatch(/^    Extended +922k \(local window\)$/m);
+    expect(formatContextSummary(current, NOW)).toBe(
+      "Context: 40k / 272k tokens (standard)\n" +
+        "Compaction: 2 on this branch · last 5 minutes ago\n" +
+        "Cached input: 20k / 30k (last assistant request)",
+    );
     expect(current).toEqual(original);
   });
 
-  it("shows unknown usage with the model window when usage is unavailable", () => {
-    const report = formatContextStatus(status, NOW);
-    expect(report).toMatch(/^    Usage +unknown \/ 272k$/m);
-    expect(report).toMatch(/^    Extended +not verified$/m);
-  });
-
-  it.each([null, -1, NaN, Infinity])("does not turn invalid token usage %s into zero", (tokens) => {
-    const report = formatContextStatus(
-      { ...status, usage: { tokens, contextWindow: 922_000, percent: null } },
+  it.each([
+    [272_000, "standard"],
+    [922_000, "extended"],
+    [500_000, "custom"],
+  ] as const)("keeps the selected %d window's %s label separate", (contextWindow, label) => {
+    const report = formatContextSummary(
+      {
+        ...status,
+        model: { ...model, contextWindow },
+        extendedWindow: 922_000,
+        usage: { tokens: 12_000, contextWindow: 128_000, percent: 9.375 },
+      },
       NOW,
     );
-    expect(report).toMatch(/^    Usage +unknown \/ 922k$/m);
-  });
-
-  it("preserves genuinely zero context usage", () => {
-    const report = formatContextStatus(
-      { ...status, usage: { tokens: 0, contextWindow: 272_000, percent: 0 } },
-      NOW,
+    expect(report.split("\n")[0]).toBe(
+      `Context: 12k / 128k tokens (effective) · Selected context window: ${contextWindow / 1000}k tokens (${label})`,
     );
-    expect(report).toMatch(/^    Usage +0 \/ 272k$/m);
-  });
-});
-
-describe("catalog baseline and desired state", () => {
-  it("reports unknown baseline honestly without inventing an extended target", () => {
-    const report = formatContextStatus({ ...status, standardWindow: undefined }, NOW);
-    expect(report).toMatch(/^    Standard +unknown$/m);
-    expect(report).toContain("unknown; reselect a catalog model");
   });
 
-  it("explains an already extended-sized catalog baseline", () => {
-    const report = formatContextStatus(
-      { ...status, standardWindow: 1_000_000, extendedWindow: 1_000_000 },
-      NOW,
-    );
-    expect(report).toContain("catalog already provides this window; no extension needed");
-  });
-
-  it.each([true, false])(
-    "keeps desired preference %s separate from effective usage and replay pause",
-    (desiredExtended) => {
-      const report = formatContextStatus({ ...status, desiredExtended, replayPaused: true }, NOW);
-      expect(report).toContain(
-        `${desiredExtended ? "extended" : "standard"} (desired, not a receipt)`,
+  it.each([undefined, null, 0, -1, NaN, Infinity])(
+    "falls back to the selected window when the effective window is %s",
+    (contextWindow) => {
+      const usage = { tokens: 12_000, contextWindow, percent: null } as unknown as ContextUsage;
+      expect(formatContextSummary({ ...status, usage }, NOW).split("\n")[0]).toBe(
+        "Context: 12k / 272k tokens (standard)",
       );
-      expect(report).toMatch(/^    Usage +unknown \/ 272k$/m);
-      expect(report).toContain("paused; explicitly extend or restore");
     },
   );
-});
 
-describe("context status compactions", () => {
-  it("reports no compaction on an empty branch", () => {
-    const report = formatContextStatus(status, NOW);
-    expect(report).toMatch(/^    Compactions +0 on this branch$/m);
-    expect(report).toMatch(/^    Last compacted +never on this branch$/m);
+  it.each([null, -1, NaN, Infinity])("keeps invalid token usage %s unknown", (tokens) => {
+    const report = formatContextSummary(
+      { ...status, usage: { tokens, contextWindow: 272_000, percent: null } },
+      NOW,
+    );
+    expect(report.split("\n")[0]).toBe("Context: 272k tokens (standard) · usage not reported");
   });
 
-  it("counts only supplied branch compactions and uses the last in branch order", () => {
+  it("retains the effective window even when token usage is unknown", () => {
+    const report = formatContextSummary(
+      { ...status, usage: { tokens: null, contextWindow: 128_000, percent: null } },
+      NOW,
+    );
+    expect(report.split("\n")[0]).toBe(
+      "Context: 128k tokens (effective) · usage not reported · Selected context window: 272k tokens (standard)",
+    );
+  });
+
+  it("does not fabricate a zero window when neither window is known", () => {
+    const report = formatContextSummary(
+      {
+        ...status,
+        model: { ...model, contextWindow: 0 },
+        usage: { tokens: 12_000, contextWindow: 0, percent: null },
+      },
+      NOW,
+    );
+    expect(report.split("\n")[0]).toBe("Context: 12k / unknown tokens (window unknown)");
+  });
+
+  it("preserves measured zero usage and keeps an empty branch compact", () => {
+    expect(
+      formatContextSummary(
+        { ...status, usage: { tokens: 0, contextWindow: 272_000, percent: 0 } },
+        NOW,
+      ),
+    ).toBe(
+      "Context: 0 / 272k tokens (standard)\n" +
+        "Compaction: 0 on this branch\n" +
+        "Cached input: not reported",
+    );
+  });
+});
+
+describe("context summary baselines and desired state", () => {
+  it("does not infer a baseline from the model name or a verified extended window", () => {
+    const report = formatContextSummary(
+      {
+        ...status,
+        model: { ...model, contextWindow: 922_000 },
+        standardWindow: undefined,
+        extendedWindow: 922_000,
+      },
+      NOW,
+    );
+    expect(report.split("\n")[0]).toBe(
+      "Context: 922k tokens (baseline unknown) · usage not reported",
+    );
+  });
+
+  it("labels a catalog already at the extended target standard with no pending replay", () => {
+    const report = formatContextSummary(
+      {
+        ...status,
+        model: { ...model, contextWindow: 1_000_000 },
+        standardWindow: 1_000_000,
+        extendedWindow: 1_000_000,
+        desiredExtended: true,
+      },
+      NOW,
+    );
+    expect(report.split("\n")[0]).toBe("Context: 1m tokens (standard) · usage not reported");
+  });
+
+  it("does not call a larger custom window extended without verified metadata", () => {
+    const report = formatContextSummary(
+      { ...status, model: { ...model, contextWindow: 922_000 } },
+      NOW,
+    );
+    expect(report.split("\n")[0]).toBe("Context: 922k tokens (custom) · usage not reported");
+  });
+
+  it.each([
+    [true, 272_000, "standard", "extended"],
+    [false, 922_000, "extended", "standard"],
+  ] as const)(
+    "does not present desired extended=%s as active",
+    (desiredExtended, contextWindow, active, desired) => {
+      const current = {
+        ...status,
+        model: { ...model, contextWindow },
+        extendedWindow: 922_000,
+        desiredExtended,
+      };
+      expect(formatContextSummary(current, NOW).split("\n")[0]).toBe(
+        `Context: ${contextWindow / 1000}k tokens (${active}) · usage not reported · ${desired} pending normal prompt`,
+      );
+      const paused = formatContextSummary({ ...current, replayPaused: true }, NOW);
+      expect(paused.split("\n")[0]).toBe(
+        `Context: ${contextWindow / 1000}k tokens (${active}) · usage not reported · ${desired} pending · replay paused`,
+      );
+      expect(paused).not.toContain("normal prompt");
+    },
+  );
+
+  it("keeps pending replay tied to the selected window, not a matching physical window", () => {
+    const current: ContextStatus = {
+      ...status,
+      model: { ...model, contextWindow: 922_000 },
+      desiredExtended: false,
+      usage: { tokens: 120_000, contextWindow: 128_000, percent: 93.75 },
+      standardWindow: 128_000,
+      extendedWindow: 922_000,
+    };
+    expect(formatContextSummary(current, NOW).split("\n")[0]).toBe(
+      "Context: 120k / 128k tokens (effective) · Selected context window: 922k tokens (extended) · standard pending normal prompt",
+    );
+    expect(formatContextSummary({ ...current, replayPaused: true }, NOW).split("\n")[0]).toBe(
+      "Context: 120k / 128k tokens (effective) · Selected context window: 922k tokens (extended) · standard pending · replay paused",
+    );
+  });
+
+  it.each([
+    [false, 272_000, "standard"],
+    [true, 922_000, "extended"],
+  ] as const)(
+    "omits pending when desired extended=%s matches the selected window",
+    (desiredExtended, contextWindow, label) => {
+      const report = formatContextSummary(
+        {
+          ...status,
+          model: { ...model, contextWindow },
+          extendedWindow: 922_000,
+          desiredExtended,
+        },
+        NOW,
+      );
+      expect(report.split("\n")[0]).toBe(
+        `Context: ${contextWindow / 1000}k tokens (${label}) · usage not reported`,
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "does not promise replay with an unknown target (%s)",
+    (desiredExtended) => {
+      const report = formatContextSummary(
+        { ...status, standardWindow: undefined, desiredExtended, replayPaused: true },
+        NOW,
+      );
+      expect(report.split("\n")[0]).toBe(
+        "Context: 272k tokens (baseline unknown) · usage not reported · " +
+          `${desiredExtended ? "extended" : "standard"} desired (target unknown) · replay paused`,
+      );
+      expect(report).not.toContain("normal prompt");
+    },
+  );
+
+  it("retains the replay pause even without a saved preference", () => {
+    expect(formatContextSummary({ ...status, replayPaused: true }, NOW).split("\n")[0]).toBe(
+      "Context: 272k tokens (standard) · usage not reported · replay paused",
+    );
+  });
+});
+
+describe("context summary branch compactions", () => {
+  it("counts only the supplied active branch and uses branch order rather than timestamps", () => {
     const shared = compaction("shared", "2026-01-10T11:59:59Z");
     const abandoned = compaction("abandoned", "2026-01-10T11:00:00Z", "shared");
     const active = compaction("active", "2026-01-08T12:00:00Z", "shared");
@@ -160,12 +337,12 @@ describe("context status compactions", () => {
       fromId: "abandoned",
       summary: "Branch summary",
     };
-    expect(formatContextStatus({ ...status, branch: [shared, abandoned] }, NOW)).toMatch(
-      /^    Last compacted +1 hour ago$/m,
-    );
-    const report = formatContextStatus({ ...status, branch: [shared, active, summary] }, NOW);
-    expect(report).toMatch(/^    Compactions +2 on this branch$/m);
-    expect(report).toMatch(/^    Last compacted +2 days ago$/m);
+    expect(
+      formatContextSummary({ ...status, branch: [shared, abandoned] }, NOW).split("\n")[1],
+    ).toBe("Compaction: 2 on this branch · last 1 hour ago");
+    expect(
+      formatContextSummary({ ...status, branch: [shared, active, summary] }, NOW).split("\n")[1],
+    ).toBe("Compaction: 2 on this branch · last 2 days ago");
   });
 
   it.each([
@@ -179,35 +356,33 @@ describe("context status compactions", () => {
     [86_399_999, "23 hours ago"],
     [86_400_000, "1 day ago"],
     [172_800_000, "2 days ago"],
-  ])("formats elapsed time at %d ms", (age, expected) => {
-    const branch = [compaction("compact", new Date(NOW - age).toISOString())];
-    expect(formatContextStatus({ ...status, branch }, NOW)).toMatch(
-      new RegExp(`^    Last compacted +${expected}$`, "m"),
+  ])("reports the final branch compaction's age at %d ms", (age, expected) => {
+    const branch = [compaction("last", new Date(NOW - age).toISOString())];
+    expect(formatContextSummary({ ...status, branch }, NOW).split("\n")[1]).toBe(
+      `Compaction: 1 on this branch · last ${expected}`,
     );
   });
 
   it.each(["not-a-date", new Date(NOW + 1000).toISOString()])(
-    "reports unknown elapsed time for %s",
+    "does not invent the last compaction time for %s",
     (timestamp) => {
-      const report = formatContextStatus(
-        { ...status, branch: [compaction("compact", timestamp)] },
-        NOW,
+      const branch = [compaction("last", timestamp)];
+      expect(formatContextSummary({ ...status, branch }, NOW).split("\n")[1]).toBe(
+        "Compaction: 1 on this branch · last time unknown",
       );
-      expect(report).toMatch(/^    Compactions +1 on this branch$/m);
-      expect(report).toMatch(/^    Last compacted +unknown$/m);
     },
   );
 });
 
-describe("context status cache reports", () => {
+describe("context summary last-request cache", () => {
   it("does not invent cache metrics without an assistant request", () => {
     const branch = [message({ role: "user", content: "Hello", timestamp: NOW })];
-    const report = formatContextStatus({ ...status, branch }, NOW);
-    expect(report).toMatch(/^    Cached input +not reported$/m);
-    expect(report).not.toMatch(/^    Cache writes /m);
+    expect(formatContextSummary({ ...status, branch }, NOW).split("\n")[2]).toBe(
+      "Cached input: not reported",
+    );
   });
 
-  it("adds disjoint uncached, cache-read and cache-write counts, excluding output", () => {
+  it("includes disjoint cache writes in the input total but excludes output", () => {
     const branch = [
       message(
         assistant({
@@ -219,40 +394,40 @@ describe("context status cache reports", () => {
         }),
       ),
     ];
-    const report = formatContextStatus({ ...status, branch }, NOW);
-    expect(report).toMatch(/^    Cached input +6k \/ 9k input tokens$/m);
-    expect(report).toMatch(/^    Cache writes +1k tokens$/m);
-    expect(report).not.toMatch(/^    Model /m);
+    const report = formatContextSummary({ ...status, branch }, NOW);
+    expect(report.split("\n")).toHaveLength(3);
+    expect(report.split("\n")[2]).toBe("Cached input: 6k / 9k · wrote 1k (last assistant request)");
   });
 
   it("allows cache reads to account for all input", () => {
     const branch = [message(assistant({ cacheRead: 1000 }))];
-    expect(formatContextStatus({ ...status, branch }, NOW)).toMatch(
-      /^    Cached input +1k \/ 1k input tokens$/m,
+    expect(formatContextSummary({ ...status, branch }, NOW).split("\n")[2]).toBe(
+      "Cached input: 1k / 1k (last assistant request)",
     );
   });
 
-  it.each([0, 1000])("calls zero cache reads none reported with %d cache writes", (cacheWrite) => {
-    const branch = [message(assistant({ input: 2000, cacheWrite }))];
-    const report = formatContextStatus({ ...status, branch }, NOW);
-    expect(report).toMatch(
-      new RegExp(
-        `^    Cached input +none reported \\(${cacheWrite ? "3k" : "2k"} input tokens\\)$`,
-        "m",
-      ),
-    );
-    if (cacheWrite) expect(report).toMatch(/^    Cache writes +1k tokens$/m);
-    else expect(report).not.toMatch(/^    Cache writes /m);
-  });
+  it.each([
+    { cacheWrite: 0, expected: "none reported · 2k input tokens" },
+    { cacheWrite: 1000, expected: "none reported · 3k input tokens · wrote 1k" },
+  ])(
+    "does not call zero cache reads a measured miss with $cacheWrite writes",
+    ({ cacheWrite, expected }) => {
+      const branch = [message(assistant({ input: 2000, cacheWrite }))];
+      expect(formatContextSummary({ ...status, branch }, NOW).split("\n")[2]).toBe(
+        `Cached input: ${expected} (last assistant request)`,
+      );
+    },
+  );
 
-  it("treats an all-zero failed request as unreported rather than a cache miss", () => {
-    const branch = [
-      message(assistant({}, { stopReason: "error", errorMessage: "Request failed" })),
-    ];
-    const report = formatContextStatus({ ...status, branch }, NOW);
-    expect(report).toMatch(/^    Cached input +not reported$/m);
-    expect(report).not.toContain("none reported");
-  });
+  it.each(["stop", "error"] as const)(
+    "keeps an all-zero %s request unreported rather than claiming a cache miss",
+    (stopReason) => {
+      const branch = [message(assistant({}, { stopReason }))];
+      expect(formatContextSummary({ ...status, branch }, NOW).split("\n")[2]).toBe(
+        "Cached input: not reported (last assistant request)",
+      );
+    },
+  );
 
   it.each([
     { input: -1 },
@@ -266,49 +441,61 @@ describe("context status cache reports", () => {
     const branch = [
       message(assistant({ input: 2000, cacheRead: 6000, cacheWrite: 1000, ...usage })),
     ];
-    const report = formatContextStatus({ ...status, branch }, NOW);
-    expect(report).toMatch(/^    Cached input +not reported$/m);
-    expect(report).not.toMatch(/^    Cache writes /m);
+    expect(formatContextSummary({ ...status, branch }, NOW).split("\n")[2]).toBe(
+      "Cached input: not reported (last assistant request)",
+    );
   });
 
   it.each([undefined, { input: 2000, cacheWrite: 0 }])(
     "tolerates missing persisted usage or counters: %j",
     (usage) => {
-      // Persisted legacy/malformed messages can lack fields required by today's type.
+      // Legacy/malformed messages can lack fields required by today's type.
       const persisted = { ...assistant(), usage } as unknown as AssistantMessage;
-      const report = formatContextStatus({ ...status, branch: [message(persisted)] }, NOW);
-      expect(report).toMatch(/^    Cached input +not reported$/m);
+      expect(
+        formatContextSummary({ ...status, branch: [message(persisted)] }, NOW).split("\n")[2],
+      ).toBe("Cached input: not reported (last assistant request)");
     },
   );
 
-  it("uses the last assistant even after a model switch and trailing non-assistant entries", () => {
-    const branch: SessionEntry[] = [
-      message(assistant({ input: 1000, cacheRead: 9000 }), "earlier"),
-      message(
-        assistant({ input: 2000, cacheRead: 1000 }, { provider: "other", model: "prior-model" }),
-        "last",
-      ),
-      {
-        type: "model_change",
-        id: "switch",
-        parentId: "last",
-        timestamp: new Date(NOW).toISOString(),
-        provider: model.provider,
-        modelId: model.id,
-      },
-      message({ role: "user", content: "Next request", timestamp: NOW }, "user"),
-      compaction("compact", new Date(NOW).toISOString()),
-    ];
-    const report = formatContextStatus({ ...status, branch }, NOW);
-    expect(report).toMatch(/^    Model +other\/prior-model$/m);
-    expect(report).toMatch(/^    Cached input +1k \/ 3k input tokens$/m);
-    expect(report).not.toContain("9k / 10k");
-  });
-
-  it("still identifies the prior request model when its usage was not reported", () => {
-    const branch = [message(assistant({}, { provider: "other", model: "prior-model" }))];
-    const report = formatContextStatus({ ...status, branch }, NOW);
-    expect(report).toMatch(/^    Model +other\/prior-model$/m);
-    expect(report).toMatch(/^    Cached input +not reported$/m);
-  });
+  it.each([
+    {
+      scenario: "reported usage",
+      usage: { input: 2000, cacheRead: 1000 },
+      stopReason: "stop",
+      expected: "1k / 3k",
+    },
+    {
+      scenario: "a failed placeholder",
+      usage: {},
+      stopReason: "error",
+      expected: "not reported",
+    },
+  ] as const)(
+    "scopes the latest request's $scenario to its prior model after a switch",
+    ({ usage, stopReason, expected }) => {
+      const branch: SessionEntry[] = [
+        message(assistant({ input: 1000, cacheRead: 9000 }), "earlier"),
+        message(
+          assistant(usage, { provider: "other", model: "prior-model", stopReason }),
+          "latest",
+        ),
+        {
+          type: "model_change",
+          id: "switch",
+          parentId: "latest",
+          timestamp: new Date(NOW).toISOString(),
+          provider: model.provider,
+          modelId: model.id,
+        },
+        message({ role: "user", content: "Next request", timestamp: NOW }, "user"),
+        compaction("last", new Date(NOW).toISOString()),
+      ];
+      const report = formatContextSummary({ ...status, branch }, NOW);
+      expect(report.split("\n")[2]).toBe(
+        `Cached input: ${expected} (last assistant request · other/prior-model)`,
+      );
+      expect(report).not.toContain("9k / 10k");
+      expect(report).not.toContain("none reported");
+    },
+  );
 });

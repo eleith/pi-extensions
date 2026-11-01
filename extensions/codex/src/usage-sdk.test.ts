@@ -52,7 +52,7 @@ it("SDK usage reuses Pi's OAuth without a model turn or credential write", async
   vi.stubGlobal("fetch", accountRequest);
   const { runtime, model, accessToken, credentialWrites, modelTurns } =
     await createOfflineCodexRuntime();
-  const { session, sessionManager, notify, extensionErrors, closeSession } =
+  const { session, sessionManager, notify, setStatus, extensionErrors, closeSession } =
     await openCodexExtensionSession(runtime, model);
   try {
     const branch = structuredClone(sessionManager.getBranch());
@@ -61,10 +61,17 @@ it("SDK usage reuses Pi's OAuth without a model turn or credential write", async
 
     await session.prompt("/eleith:codex usage");
     expect(notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Primary (5h): 25% used"),
+      expect.stringContaining("5h window: 75% remaining (25% used)"),
       "info",
     );
     expect(accountRequest).toHaveBeenCalledOnce();
+    expect(setStatus.mock.calls).toEqual([
+      ["eleith-codex-usage", "Codex: fetching usage…"],
+      ["eleith-codex-usage", undefined],
+    ]);
+    expect(setStatus.mock.invocationCallOrder[1]).toBeLessThan(
+      notify.mock.invocationCallOrder.at(-1)!,
+    );
     const headers = new Headers(accountRequest.mock.calls[0][1]?.headers);
     expect(headers.get("authorization")).toBe(`Bearer ${accessToken}`);
     expect(headers.get("chatgpt-account-id")).toBe("sdk-test-account");
@@ -150,16 +157,18 @@ async function openCodexExtensionSession(runtime: ModelRuntime, model: Model<Api
     noTools: "all",
   });
   const notify = vi.fn();
+  const setStatus = vi.fn();
   const extensionErrors: unknown[] = [];
   await session.bindExtensions({
     mode: "tui",
-    uiContext: { notify } as unknown as ExtensionUIContext,
+    uiContext: { notify, setStatus } as unknown as ExtensionUIContext,
     onError: (error) => extensionErrors.push(error),
   });
   return {
     session,
     sessionManager,
     notify,
+    setStatus,
     extensionErrors,
     async closeSession() {
       await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });

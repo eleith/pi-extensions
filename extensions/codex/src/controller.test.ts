@@ -841,11 +841,9 @@ describe("ContextController", () => {
         `No verified extended context limit for openai-codex/${id}. Only supported Codex models can be changed.`,
         "warning",
       );
-      await f.controller.handle("", f.ctx);
-      expect(f.notify).toHaveBeenLastCalledWith(
-        expect.stringMatching(/Extended +not verified/),
-        "info",
-      );
+      const notifications = f.notify.mock.calls.length;
+      expect(f.controller.getStatus(f.ctx)?.extendedWindow).toBeUndefined();
+      expect(f.notify).toHaveBeenCalledTimes(notifications);
       expect(f.state.current).toBe(f.catalog);
       expect(f.catalog).toEqual(original);
       expect(f.api.setModel).not.toHaveBeenCalled();
@@ -886,7 +884,11 @@ describe("ContextController", () => {
       expect.stringContaining("baseline is unknown"),
       "warning",
     );
-    await f.controller.handle("", f.ctx);
-    expect(f.notify).toHaveBeenLastCalledWith(expect.stringMatching(/Standard +unknown/), "info");
+    const notifications = f.notify.mock.calls.length;
+    expect(f.controller.getStatus(f.ctx)).toMatchObject({
+      standardWindow: undefined,
+      extendedWindow: undefined,
+    });
+    expect(f.notify).toHaveBeenCalledTimes(notifications);
   });
 });

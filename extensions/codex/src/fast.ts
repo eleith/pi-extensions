@@ -18,6 +18,8 @@ import {
 } from "./fast-state.ts";
 import {
   formatFastStatus,
+  formatFastDiagnostics,
+  type FastStatus,
   type FastRequestPolicy,
   type ObservedTier,
   type RequestedTier,
@@ -93,11 +95,44 @@ export class FastController {
     this.preferences = readFastPreferences(ctx.sessionManager.getBranch());
   }
 
+  getStatus(ctx: FastHost): FastStatus | undefined {
+    if (this.disposed) return undefined;
+    const model = ctx.model;
+    if (!model) return undefined;
+    const selectedModelKey = modelKey(model);
+    const direct = isDirectCodexSelection(ctx);
+    let activity = this.modelTierActivity;
+    if (
+      !activity ||
+      !direct ||
+      activity.modelKey !== selectedModelKey ||
+      activity.sessionId !== ctx.sessionManager.getSessionId()
+    )
+      activity = undefined;
+    let eligibility: FastEligibility = "unknown";
+    if (direct) eligibility = this.currentEligibility(selectedModelKey);
+    return {
+      preference: this.preferenceFor(selectedModelKey),
+      eligibility,
+      requestPolicy: this.requestPolicy(ctx),
+      lastRequested: activity?.requested,
+      lastObserved: activity?.observed,
+      conflict: activity?.conflict ?? false,
+    };
+  }
+
   async handle(args: string, ctx: FastHost): Promise<void> {
     if (this.disposed) return;
     const action = args.trim().toLowerCase();
-    if (!action || action === "status") {
+    if (!action) {
       this.report(ctx);
+      return;
+    }
+    if (action === "status") {
+      const status = this.getStatus(ctx);
+      let message = "No model selected.";
+      if (status) message = formatFastDiagnostics(status);
+      ctx.ui.notify(message, "info");
       return;
     }
     if (!["on", "off", "toggle", "reset"].includes(action)) {
@@ -385,32 +420,14 @@ export class FastController {
   }
 
   private report(ctx: FastHost): void {
-    const model = ctx.model;
-    if (!model) {
+    const status = this.getStatus(ctx);
+    if (!status) {
       ctx.ui.notify("No model selected.", "info");
       return;
     }
-    const selectedModelKey = modelKey(model);
-    const direct = isDirectCodexSelection(ctx);
-    let activity = this.modelTierActivity;
-    if (
-      !activity ||
-      !direct ||
-      activity.modelKey !== selectedModelKey ||
-      activity.sessionId !== ctx.sessionManager.getSessionId()
-    )
-      activity = undefined;
-    let eligibility: FastEligibility = "unknown";
-    if (direct) eligibility = this.currentEligibility(selectedModelKey);
-    const status = {
-      preference: this.preferenceFor(selectedModelKey),
-      eligibility,
-      requestPolicy: this.requestPolicy(ctx),
-      lastRequested: activity?.requested,
-      lastObserved: activity?.observed,
-      conflict: activity?.conflict ?? false,
-    };
-    ctx.ui.notify(formatFastStatus(status), "info");
+    const summary = formatFastStatus(status);
+    const hint = `/${this.commandName} fast on|off|toggle|reset · status for details`;
+    ctx.ui.notify(`${summary}\n\n${hint}`, "info");
   }
 }
 

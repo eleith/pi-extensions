@@ -6,9 +6,13 @@ import type {
 import { expect, it, vi } from "vitest";
 import { registerCommand } from "./commands.ts";
 
-function setup(argumentActions?: readonly string[]) {
+type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
+
+function setup(
+  argumentActions?: readonly string[],
+  getArgumentCompletions?: Command["getArgumentCompletions"],
+) {
   type Start = (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
-  type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
   let start: Start | undefined;
   let command: Command | undefined;
   const handler = vi.fn();
@@ -29,6 +33,7 @@ function setup(argumentActions?: readonly string[]) {
     actions: ["on", "off", "test", "toggle"],
     defaultAction: "toggle",
     argumentActions,
+    getArgumentCompletions,
     handler,
   });
   if (!start) throw new Error("Missing session_start handler");
@@ -68,4 +73,36 @@ it("does not allow arguments for other actions or invent URL completions", async
   expect(f.handler).not.toHaveBeenCalled();
   expect(f.command.getArgumentCompletions?.("test https://")).toBe(null);
   expect(f.command.getArgumentCompletions?.("TE")).toEqual([{ value: "test", label: "test" }]);
+});
+
+it("keeps the default action completions when no override is supplied", () => {
+  const { command } = setup();
+  expect(command.getArgumentCompletions?.("  O")).toEqual([
+    { value: "on", label: "on" },
+    { value: "off", label: "off" },
+  ]);
+  expect(command.getArgumentCompletions?.("unknown")).toBe(null);
+  expect(command.getArgumentCompletions?.("on ")).toBe(null);
+});
+
+it("passes through a native completer without normalizing its input or replacing null", () => {
+  const complete = vi.fn(() => null);
+  const { command } = setup(undefined, complete);
+  expect(command.getArgumentCompletions).toBe(complete);
+  expect(command.getArgumentCompletions?.("  ON ")).toBe(null);
+  expect(complete).toHaveBeenCalledWith("  ON ");
+});
+
+it("supports asynchronous native completion items without changing strict routing", async () => {
+  const items = [{ value: "test extra", label: "extra", description: "Fixture argument" }];
+  const complete = vi.fn(async () => items);
+  const f = setup(["test"], complete);
+  expect(await f.command.getArgumentCompletions?.("test e")).toBe(items);
+  await f.command.handler("test extra", f.ctx);
+  expect(f.handler).toHaveBeenLastCalledWith("test", f.ctx, "extra");
+  f.handler.mockClear();
+  await f.command.handler("on extra", f.ctx);
+  await f.command.handler("unknown", f.ctx);
+  expect(f.handler).not.toHaveBeenCalled();
+  expect(f.notify).toHaveBeenCalledTimes(2);
 });

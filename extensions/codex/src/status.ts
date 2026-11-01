@@ -2,7 +2,7 @@ import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { ContextUsage, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { modelKey } from "./profiles.ts";
 
-interface ContextStatus {
+export interface ContextStatus {
   readonly model: Model<Api>;
   readonly usage: ContextUsage | undefined;
   readonly standardWindow: number | undefined;
@@ -21,12 +21,12 @@ function validCount(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-function tokens(value: number | null | undefined): string {
-  return validCount(value) ? TOKEN_FORMAT.format(value).toLowerCase() : "unknown";
+function validWindow(value: number | null | undefined): value is number {
+  return validCount(value) && value > 0;
 }
 
-function row(label: string, value: string): string {
-  return `    ${label.padEnd(18)}${value}`;
+function tokens(value: number | null | undefined): string {
+  return validCount(value) ? TOKEN_FORMAT.format(value).toLowerCase() : "unknown";
 }
 
 function elapsed(timestamp: string, now: number): string {
@@ -50,87 +50,78 @@ function lastAssistant(branch: readonly SessionEntry[]): AssistantMessage | unde
   return undefined;
 }
 
-function cacheRows(message: AssistantMessage | undefined, currentModel: Model<Api>): string[] {
-  if (!message) return [row("Cached input", "not reported")];
+function cacheSummary(message: AssistantMessage | undefined, currentModel: Model<Api>): string {
+  if (!message) return "Cached input: not reported";
 
-  const rows: string[] = [];
   const requestModel = modelKey({ provider: message.provider, id: message.model });
-  if (requestModel !== modelKey(currentModel)) rows.push(row("Model", requestModel));
-
+  const scope =
+    requestModel === modelKey(currentModel)
+      ? "last assistant request"
+      : `last assistant request · ${requestModel}`;
   const usage = message.usage;
-  // Pi normalizes input into disjoint uncached, cache-read, and cache-write counts.
-  // An all-zero placeholder (e.g. a failed request) is not evidence of a cache miss.
+  let value = "not reported";
   if (
-    !usage ||
-    !validCount(usage.input) ||
-    !validCount(usage.cacheRead) ||
-    !validCount(usage.cacheWrite)
+    usage &&
+    validCount(usage.input) &&
+    validCount(usage.cacheRead) &&
+    validCount(usage.cacheWrite)
   ) {
-    return [...rows, row("Cached input", "not reported")];
+    // Pi's uncached, cache-read and cache-write counts are disjoint; output is excluded.
+    const input = usage.input + usage.cacheRead + usage.cacheWrite;
+    if (Number.isFinite(input) && input > 0) {
+      // Zero cache counters may be adapter defaults, not a measured cache miss.
+      value =
+        usage.cacheRead > 0
+          ? `${tokens(usage.cacheRead)} / ${tokens(input)}`
+          : `none reported · ${tokens(input)} input tokens`;
+      if (usage.cacheWrite > 0) value += ` · wrote ${tokens(usage.cacheWrite)}`;
+    }
   }
-  const input = usage.input + usage.cacheRead + usage.cacheWrite;
-  if (!Number.isFinite(input) || input === 0) return [...rows, row("Cached input", "not reported")];
-
-  // Some adapters also normalize absent cache counters to zero. Don't claim we
-  // know whether that means a measured miss or a provider without cache metrics.
-  rows.push(
-    row(
-      "Cached input",
-      usage.cacheRead > 0
-        ? `${tokens(usage.cacheRead)} / ${tokens(input)} input tokens`
-        : `none reported (${tokens(input)} input tokens)`,
-    ),
-  );
-  if (usage.cacheWrite > 0) rows.push(row("Cache writes", `${tokens(usage.cacheWrite)} tokens`));
-  return rows;
+  return `Cached input: ${value} (${scope})`;
 }
 
-/** Read-only report: no settings-file guesses, provider calls, or preference changes. */
-export function formatContextStatus(status: ContextStatus, now = Date.now()): string {
-  const { model, usage, standardWindow, extendedWindow, branch, desiredExtended, replayPaused } =
+function windowLabel({ model, standardWindow, extendedWindow }: ContextStatus): string {
+  if (!validWindow(model.contextWindow)) return "window unknown";
+  if (!validWindow(standardWindow)) return "baseline unknown";
+  if (model.contextWindow === standardWindow) return "standard";
+  if (validWindow(extendedWindow) && model.contextWindow === extendedWindow) return "extended";
+  return "custom";
+}
+
+/** Read-only local snapshot; the caller supplies the model header and fast-mode hint. */
+export function formatContextSummary(status: ContextStatus, now = Date.now()): string {
+  const { model, usage, standardWindow, extendedWindow, desiredExtended, replayPaused, branch } =
     status;
-  const lines = [
-    `codex · ${modelKey(model)}`,
-    "",
-    "  window",
-    row(
-      "Usage",
-      `${tokens(usage?.tokens)} / ${tokens(usage?.contextWindow ?? model.contextWindow)}`,
-    ),
-    row("Standard", tokens(standardWindow)),
-  ];
+  const selectedWindow = validWindow(model.contextWindow) ? model.contextWindow : undefined;
+  // Routed/virtual models may advertise a different window from the one used for compaction.
+  const effectiveWindow = validWindow(usage?.contextWindow) ? usage.contextWindow : selectedWindow;
+  const separateWindows = effectiveWindow !== selectedWindow;
+  const label = separateWindows ? "effective" : windowLabel(status);
+  const window = `${tokens(effectiveWindow)} tokens (${label})`;
+  let context = validCount(usage?.tokens)
+    ? `Context: ${tokens(usage.tokens)} / ${window}`
+    : `Context: ${window} · usage not reported`;
 
-  if (standardWindow === undefined) {
-    lines.push(row("Baseline", "unknown; reselect a catalog model"));
-  } else if (extendedWindow === standardWindow) {
-    lines.push(row("Baseline", "catalog already provides this window; no extension needed"));
+  if (separateWindows) {
+    context += ` · Selected context window: ${tokens(selectedWindow)} tokens (${windowLabel(status)})`;
   }
-
   if (desiredExtended !== undefined) {
-    const preference = desiredExtended ? "extended" : "standard";
-    lines.push(row("Branch preference", `${preference} (desired, not a receipt)`));
+    const desired = desiredExtended ? "extended" : "standard";
+    const target = desiredExtended ? extendedWindow : standardWindow;
+    if (!validWindow(target)) {
+      context += ` · ${desired} desired (target unknown)`;
+    } else if (selectedWindow !== target) {
+      context += ` · ${desired} pending${replayPaused ? "" : " normal prompt"}`;
+    }
   }
-  if (replayPaused) {
-    lines.push(row("Automatic replay", "paused; explicitly extend or restore"));
-  }
-
-  const extendedLabel =
-    extendedWindow === undefined ? "not verified" : `${tokens(extendedWindow)} (local window)`;
-  lines.push(row("Extended", extendedLabel));
+  if (replayPaused) context += " · replay paused";
 
   const compactions = branch.filter((entry) => entry.type === "compaction");
   const lastCompaction = compactions.at(-1);
-  const lastCompacted = lastCompaction
-    ? elapsed(lastCompaction.timestamp, now)
-    : "never on this branch";
-  lines.push(
-    "",
-    "  compaction",
-    row("Compactions", `${compactions.length} on this branch`),
-    row("Last compacted", lastCompacted),
-    "",
-    "  cache · last assistant request",
-    ...cacheRows(lastAssistant(branch), model),
-  );
-  return lines.join("\n");
+  let compaction = `Compaction: ${compactions.length} on this branch`;
+  if (lastCompaction) {
+    const age = elapsed(lastCompaction.timestamp, now);
+    compaction += age === "unknown" ? " · last time unknown" : ` · last ${age}`;
+  }
+  return [context, compaction, cacheSummary(lastAssistant(branch), model)].join("\n");
 }

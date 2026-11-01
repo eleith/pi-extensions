@@ -20,20 +20,40 @@ export function formatCodexUsage(value: unknown, now = Date.now()): string | und
   const sections = readUsageSections(value);
   if (!sections) return undefined;
 
-  const rows = [
-    "codex account usage · openai-codex",
-    `Plan: ${sections.plan ?? "unknown"}`,
-    "",
-    ...bucketRows("Codex", sections.codex, now),
-  ];
+  const buckets = [{ name: "Codex", bucket: sections.codex }];
   if (sections.includeCodeReview) {
-    rows.push("", ...bucketRows("Code review", sections.codeReview, now));
+    buckets.push({ name: "Code review", bucket: sections.codeReview });
   }
-  rows.push(...additionalBucketRows(sections.additional, now));
-  rows.push("", `Credits: ${creditStatus(sections.credits)}`);
-  if (sections.spendingLimitReached) rows.push("Workspace spending limit: reached");
+  buckets.push(...additionalBuckets(sections.additional));
+
+  const rows = ["codex account usage · openai-codex", `Plan: ${sections.plan ?? "unknown"}`];
+  const warnings: string[] = [];
+  if (sections.spendingLimitReached) warnings.push("Workspace spending limit: reached");
   if (sections.accountLimit)
-    rows.push(`Account limit: ${sections.accountLimit.replaceAll("_", " ")}`);
+    warnings.push(`Account limit: ${sections.accountLimit.replaceAll("_", " ")}`);
+  for (const { name, bucket } of buckets) {
+    const restrictions: string[] = [];
+    if (bucket?.limit_reached === true) restrictions.push("limit reached");
+    if (bucket?.allowed === false) restrictions.push("requests not currently allowed");
+    if (restrictions.length) warnings.push(`${name}: ${restrictions.join("; ")}`);
+  }
+  if (warnings.length) rows.push("", ...warnings);
+  if (sections.credits) rows.push(`Credits: ${creditStatus(sections.credits)}`);
+
+  const notReported: string[] = [];
+  for (const { name, bucket } of buckets) {
+    const quotaRows = bucketRows(name, bucket, now);
+    if (quotaRows.length) rows.push("", ...quotaRows);
+    else notReported.push(`${name} quota`);
+  }
+  if (!sections.credits) notReported.push("credits");
+  if (notReported.length) rows.push("", `Not reported: ${notReported.join(", ")}.`);
+  if (sections.additional && sections.additional.length > MAX_ADDITIONAL_BUCKETS) {
+    rows.push(
+      "",
+      `${sections.additional.length - MAX_ADDITIONAL_BUCKETS} additional entries omitted.`,
+    );
+  }
   return rows.join("\n");
 }
 
@@ -77,49 +97,42 @@ function readUsageSections(value: unknown): UsageSections | undefined {
 }
 
 function bucketRows(name: string, bucket: JsonObject | undefined, now: number): string[] {
-  if (!bucket) return [name, "  Not reported"];
-  const rows = [
+  if (!bucket || (!readObject(bucket.primary_window) && !readObject(bucket.secondary_window)))
+    return [];
+  return [
     name,
     ...windowRows("Primary", bucket.primary_window, now),
     ...windowRows("Secondary", bucket.secondary_window, now),
   ];
-  if (bucket.limit_reached === true) rows.push("  Limit reached");
-  else if (bucket.allowed === false) rows.push("  Requests not currently allowed");
-  return rows;
 }
 
 function windowRows(name: string, value: unknown, now: number): string[] {
   const window = readObject(value);
-  if (!window) return [`  ${name}: not reported`];
+  if (!window) return [`  ${name} window: not reported`];
 
   const seconds = finiteNonnegativeNumber(window.limit_window_seconds);
-  let interval = "duration unknown";
+  let label = `${name} window (duration not reported)`;
   if (seconds !== undefined && Number.isSafeInteger(seconds) && seconds > 0)
-    interval = duration(seconds);
+    label = `${duration(seconds)} window`;
   const used = finiteNonnegativeNumber(window.used_percent);
-  let usage = "usage unknown";
+  let usage = "remaining not reported";
   if (used !== undefined && used <= 100) {
-    usage = `${NUMBERS.format(used)}% used · ${NUMBERS.format(100 - used)}% remaining`;
+    usage = `${NUMBERS.format(100 - used)}% remaining (${NUMBERS.format(used)}% used)`;
   }
-  return [`  ${name} (${interval}): ${usage}`, `    Resets: ${resetTime(window, now)}`];
+  return [`  ${label}: ${usage}`, `    Resets: ${resetTime(window, now)}`];
 }
 
-function additionalBucketRows(additional: unknown[] | undefined, now: number): string[] {
-  if (!additional) return [];
-  const rows: string[] = [];
-  for (const [index, value] of additional.slice(0, MAX_ADDITIONAL_BUCKETS).entries()) {
+function additionalBuckets(
+  additional: unknown[] | undefined,
+): { name: string; bucket: JsonObject | undefined }[] {
+  return (additional ?? []).slice(0, MAX_ADDITIONAL_BUCKETS).map((value, index) => {
     const entry = readObject(value);
     const name =
       sanitizeDisplayLabel(entry?.limit_name) ??
       sanitizeDisplayLabel(entry?.metered_feature) ??
       `Additional ${index + 1}`;
-    const quota = readObject(entry?.rate_limit);
-    rows.push("", ...bucketRows(name, quota, now));
-  }
-  if (additional.length > MAX_ADDITIONAL_BUCKETS) {
-    rows.push("", `${additional.length - MAX_ADDITIONAL_BUCKETS} additional entries omitted.`);
-  }
-  return rows;
+    return { name, bucket: readObject(entry?.rate_limit) };
+  });
 }
 
 function creditStatus(credits: JsonObject | undefined): string {
@@ -151,7 +164,16 @@ function resetTime(window: JsonObject, now: number): string {
   else if (relative !== undefined) timestamp = now + relative * 1000;
   const date = new Date(timestamp);
   if (!Number.isFinite(date.getTime())) return "unknown";
-  const time = date.toISOString().replace("T", " ").replace(".000Z", " UTC");
+  const time = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+    timeZoneName: "short",
+  }).format(date);
   const remaining = Math.ceil((timestamp - now) / 1000);
   return remaining > 0
     ? `${time} (in ${duration(remaining)})`

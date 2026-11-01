@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { formatCodexUsage } from "./usage.ts";
 
 const NOW = Date.parse("2026-01-10T12:00:00Z");
@@ -7,8 +7,19 @@ const primary = {
   limit_window_seconds: 1800,
   reset_at: NOW / 1000 + 3600,
 };
+const LocalDateTimeFormat = Intl.DateTimeFormat;
+let timeZone = "UTC";
 
-it("formats an exact account report without mutating the payload", () => {
+beforeEach(() => {
+  timeZone = "UTC";
+  // Pin only the test's local zone; production must use the user's local zone.
+  vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (locales, options) {
+    return new LocalDateTimeFormat(locales, { ...options, timeZone });
+  });
+});
+afterEach(() => vi.restoreAllMocks());
+
+it("formats a remaining-first account report without mutating the payload", () => {
   const payload = {
     plan_type: "plus",
     account_id: "do-not-display-account-id",
@@ -20,17 +31,16 @@ it("formats an exact account report without mutating the payload", () => {
   const report = formatCodexUsage(payload, NOW)!;
   expect(report).toBe(`codex account usage · openai-codex
 Plan: plus
+Credits: 12.5 balance (available)
 
 Codex
-  Primary (30m): 25% used · 75% remaining
-    Resets: 2026-01-10 13:00:00 UTC (in 1h)
-  Secondary: not reported
-
-Credits: 12.5 balance (available)`);
+  30m window: 75% remaining (25% used)
+    Resets: Jan 10, 2026, 13:00:00 UTC (in 1h)
+  Secondary window: not reported`);
   expect(payload).toEqual(original);
 });
 
-it("does not invent windows or unlimited credits for plans with missing quota data", () => {
+it("summarizes absent data without inventing windows or unlimited credits", () => {
   const report = formatCodexUsage(
     {
       plan_type: "pro",
@@ -40,18 +50,31 @@ it("does not invent windows or unlimited credits for plans with missing quota da
     },
     NOW,
   )!;
-  expect(report).toContain("Codex\n  Not reported");
-  expect(report).toContain("Code review\n  Not reported");
-  expect(report).toContain("Credits: not reported");
+  expect(report).toBe(`codex account usage · openai-codex
+Plan: pro
+
+Not reported: Codex quota, Code review quota, credits.`);
   expect(report).not.toMatch(/0%|5h|7d|unlimited/);
 });
 
+it("does not add an unadvertised review quota or default windows to a plan-only report", () => {
+  expect(formatCodexUsage({ plan_type: "plus" }, NOW)).toBe(
+    "codex account usage · openai-codex\nPlan: plus\n\nNot reported: Codex quota, credits.",
+  );
+});
+
 it.each([
-  [0, "0% used · 100% remaining"],
-  [-1, "usage unknown"],
-  [101, "usage unknown"],
-  [NaN, "usage unknown"],
-  ["25", "usage unknown"],
+  [0, "100% remaining (0% used)"],
+  [25, "75% remaining (25% used)"],
+  [100, "0% remaining (100% used)"],
+  [12.5, "87.5% remaining (12.5% used)"],
+  [-1, "remaining not reported"],
+  [101, "remaining not reported"],
+  [NaN, "remaining not reported"],
+  [Infinity, "remaining not reported"],
+  ["25", "remaining not reported"],
+  [null, "remaining not reported"],
+  [undefined, "remaining not reported"],
 ] as const)("keeps invalid percentages distinct from genuine zero: %s", (used, expected) => {
   const report = formatCodexUsage(
     {
@@ -59,7 +82,43 @@ it.each([
     },
     NOW,
   )!;
-  expect(report).toContain(expected);
+  expect(report).toContain(`30m window: ${expected}`);
+  if (expected === "remaining not reported") expect(report).not.toContain("%");
+});
+
+it.each([
+  [1800, "30m window"],
+  [18_000, "5h window"],
+  [604_800, "7d window"],
+  [90_061, "1d 1h 1m 1s window"],
+  [0, "Primary window (duration not reported)"],
+  [-1, "Primary window (duration not reported)"],
+  [1.5, "Primary window (duration not reported)"],
+  [Number.MAX_SAFE_INTEGER + 1, "Primary window (duration not reported)"],
+  ["18000", "Primary window (duration not reported)"],
+  [undefined, "Primary window (duration not reported)"],
+] as const)("labels only the actual advertised duration: %s", (seconds, expected) => {
+  const report = formatCodexUsage(
+    { rate_limit: { primary_window: { ...primary, limit_window_seconds: seconds } } },
+    NOW,
+  )!;
+  expect(report).toContain(`${expected}: 75% remaining (25% used)`);
+});
+
+it("groups actual primary and secondary durations under their quota", () => {
+  const report = formatCodexUsage(
+    {
+      rate_limit: {
+        primary_window: { ...primary, limit_window_seconds: 18_000 },
+        secondary_window: { ...primary, used_percent: 10, limit_window_seconds: 604_800 },
+      },
+    },
+    NOW,
+  )!;
+  expect(report).toContain("Codex\n  5h window: 75% remaining (25% used)");
+  expect(report).toContain("  7d window: 90% remaining (10% used)");
+  expect(report).not.toContain("Primary");
+  expect(report).not.toContain("Secondary");
 });
 
 it("uses supplied relative resets without guessing a window duration", () => {
@@ -75,11 +134,35 @@ it("uses supplied relative resets without guessing a window duration", () => {
     },
     NOW,
   )!;
-  expect(report).toContain("Primary (duration unknown): 40% used · 60% remaining");
-  expect(report).toContain("2026-01-10 12:01:30 UTC (in 1m 30s)");
+  expect(report).toContain("Primary window (duration not reported): 60% remaining (40% used)");
+  expect(report).toContain("Jan 10, 2026, 12:01:30 UTC (in 1m 30s)");
 });
 
-it("reports unknown invalid reset times and never resets a measured balance locally", () => {
+it.each([
+  ["2026-01-10T12:00:00Z", "Jan 10, 2026, 08:00:00 EST"],
+  ["2026-07-10T12:00:00Z", "Jul 10, 2026, 09:00:00 EDT"],
+  ["2026-01-10T00:00:00Z", "Jan 9, 2026, 20:00:00 EST"],
+])("uses local reset date, zone and relative time: %s", (now, expected) => {
+  timeZone = "America/New_York";
+  const report = formatCodexUsage(
+    { rate_limit: { primary_window: { reset_after_seconds: 3600 } } },
+    Date.parse(now),
+  )!;
+  expect(report).toContain(`Resets: ${expected} (in 1h)`);
+  expect(report).toContain("remaining not reported");
+  expect(report).not.toContain("UTC");
+});
+
+it("prefers an absolute reset to a conflicting relative reset", () => {
+  const report = formatCodexUsage(
+    { rate_limit: { primary_window: { ...primary, reset_after_seconds: 90 } } },
+    NOW,
+  )!;
+  expect(report).toContain("Jan 10, 2026, 13:00:00 UTC (in 1h)");
+  expect(report).not.toContain("in 1m 30s");
+});
+
+it("reports invalid resets as unknown and never renews a measured balance locally", () => {
   const report = formatCodexUsage(
     {
       rate_limit: {
@@ -90,10 +173,32 @@ it("reports unknown invalid reset times and never resets a measured balance loca
     },
     NOW,
   )!;
-  expect(report).toContain("100% used · 0% remaining");
-  expect(report).toContain("reset time passed; refresh usage");
+  expect(report).toContain("0% remaining (100% used)");
+  expect(report).toContain("Jan 10, 2026, 11:59:59 UTC (reset time passed; refresh usage)");
   expect(report).toContain("Resets: unknown");
-  expect(report).toContain("Limit reached");
+  expect(report.indexOf("Codex: limit reached")).toBeLessThan(report.indexOf("\nCodex\n"));
+  expect(report).not.toContain("100% remaining");
+});
+
+it.each([
+  {},
+  { reset_at: "1768050000" },
+  { reset_at: 1e20, reset_after_seconds: 60 },
+  { reset_after_seconds: -1 },
+  { reset_after_seconds: "60" },
+])("does not fabricate a reset from missing or invalid values: %j", (reset) => {
+  expect(
+    formatCodexUsage({ rate_limit: { primary_window: { used_percent: 25, ...reset } } }, NOW),
+  ).toContain("Resets: unknown");
+});
+
+it("treats a reset exactly at now as expired without claiming renewal", () => {
+  const report = formatCodexUsage(
+    { rate_limit: { primary_window: { used_percent: 100, reset_after_seconds: 0 } } },
+    NOW,
+  )!;
+  expect(report).toContain("0% remaining (100% used)");
+  expect(report).toContain("reset time passed; refresh usage");
 });
 
 it.each([
@@ -102,14 +207,25 @@ it.each([
   [{ has_credits: false, balance: "0" }, "0 balance (unavailable)"],
   [{ has_credits: true }, "available; balance not reported"],
   [{ has_credits: false, balance: "0x10" }, "unavailable; balance not reported"],
+  [{ balance: 0 }, "0 balance (availability unknown)"],
+  [{ balance: -1 }, "availability unknown; balance not reported"],
+  [{ balance: Infinity }, "availability unknown; balance not reported"],
+  [{ balance: "1e3" }, "availability unknown; balance not reported"],
+  [{ balance: " 12.50 " }, "12.5 balance (availability unknown)"],
+  [{ unlimited: "true", has_credits: "true" }, "availability unknown; balance not reported"],
 ] as const)("reports only supplied credit facts: %j", (credits, expected) => {
   expect(formatCodexUsage({ credits }, NOW)).toContain(`Credits: ${expected}`);
 });
 
-it("includes review and additional buckets plus explicit account restrictions", () => {
+it("puts spending, account and all bucket restrictions before healthy quotas", () => {
   const report = formatCodexUsage(
     {
-      code_review_rate_limit: { primary_window: { ...primary, limit_window_seconds: 604_800 } },
+      rate_limit: { primary_window: primary },
+      code_review_rate_limit: {
+        limit_reached: true,
+        allowed: false,
+        primary_window: { ...primary, limit_window_seconds: 604_800 },
+      },
       additional_rate_limits: [
         {
           metered_feature: "codex_other",
@@ -117,16 +233,60 @@ it("includes review and additional buckets plus explicit account restrictions", 
           rate_limit: { allowed: false, primary_window: primary },
         },
       ],
+      credits: { has_credits: false, balance: "0" },
       spend_control: { reached: true },
       rate_limit_reached_type: { type: "workspace_owner_credits_depleted" },
     },
     NOW,
   )!;
-  expect(report).toContain("Code review\n  Primary (7d)");
-  expect(report).toContain("Other model pool\n  Primary (30m)");
-  expect(report).toContain("Requests not currently allowed");
-  expect(report).toContain("Workspace spending limit: reached");
-  expect(report).toContain("Account limit: workspace owner credits depleted");
+  expect(report.startsWith("codex account usage · openai-codex\n")).toBe(true);
+  for (const warning of [
+    "Workspace spending limit: reached",
+    "Account limit: workspace owner credits depleted",
+    "Code review: limit reached; requests not currently allowed",
+    "Other model pool: requests not currently allowed",
+    "Credits: 0 balance (unavailable)",
+  ]) {
+    expect(report).toContain(warning);
+    expect(report.indexOf(warning)).toBeLessThan(report.indexOf("\nCodex\n"));
+  }
+  expect(report.indexOf("Workspace spending limit")).toBeLessThan(report.indexOf("Code review:"));
+  expect(report).toContain("Code review\n  7d window: 75% remaining (25% used)");
+  expect(report).toContain("Other model pool\n  30m window: 75% remaining (25% used)");
+});
+
+it("keeps access restrictions visible even when all quota windows are absent", () => {
+  const report = formatCodexUsage(
+    {
+      rate_limit: { allowed: false },
+      code_review_rate_limit: { limit_reached: true },
+      additional_rate_limits: [{ metered_feature: "Extra", rate_limit: { allowed: false } }],
+    },
+    NOW,
+  )!;
+  expect(report).toBe(`codex account usage · openai-codex
+Plan: unknown
+
+Codex: requests not currently allowed
+Code review: limit reached
+Extra: requests not currently allowed
+
+Not reported: Codex quota, Code review quota, Extra quota, credits.`);
+});
+
+it("does not interpret truthy restriction values as explicit restrictions", () => {
+  const report = formatCodexUsage(
+    {
+      rate_limit: { allowed: "false", limit_reached: "true" },
+      spend_control: { reached: "true" },
+      rate_limit_reached_type: { type: 123 },
+    },
+    NOW,
+  )!;
+  expect(report).not.toMatch(
+    /requests not currently allowed|limit reached|spending limit|Account limit/,
+  );
+  expect(report).toContain("Not reported: Codex quota, credits.");
 });
 
 it("bounds and sanitizes backend labels and additional-bucket output", () => {
@@ -144,6 +304,25 @@ it("bounds and sanitizes backend labels and additional-bucket output", () => {
   expect(report).toContain("2 additional entries omitted.");
   expect(report).not.toContain("Pool 8");
   expect(report.length).toBeLessThan(5000);
+});
+
+it("sanitizes restriction labels and retains additional-bucket name fallbacks", () => {
+  const report = formatCodexUsage(
+    {
+      rate_limit_reached_type: { type: "owner\r\ncredits\u001bdepleted" },
+      additional_rate_limits: [
+        { limit_name: "\n", metered_feature: "Fallback\tpool", rate_limit: { allowed: false } },
+        null,
+        { limit_name: 42, metered_feature: false },
+      ],
+    },
+    NOW,
+  )!;
+  expect(report).toContain("Account limit: owner credits depleted");
+  expect(report).toContain("Fallback pool: requests not currently allowed");
+  expect(report).toContain(
+    "Not reported: Codex quota, Fallback pool quota, Additional 2 quota, Additional 3 quota, credits.",
+  );
 });
 
 it.each([null, [], {}, { unrelated: 10 }, { rate_limit: "wrong shape" }])(

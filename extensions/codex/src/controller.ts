@@ -2,7 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { contextProfile, modelKey } from "./profiles.ts";
 import { CONTEXT_ENTRY, readPreferences, type ContextPreference } from "./state.ts";
-import { formatContextStatus } from "./status.ts";
+import type { ContextStatus } from "./status.ts";
 
 // Small public ports: no provider calls, catalog refresh, or settings-file reads.
 export type ContextAPI = Pick<
@@ -92,10 +92,6 @@ export class ContextController {
   async handle(args: string, ctx: ContextHost): Promise<void> {
     if (this.disposed) return;
     const action = args.trim().toLowerCase();
-    if (!action) {
-      this.status(ctx);
-      return;
-    }
     if (action !== "extend" && action !== "restore") {
       ctx.ui.notify(`Usage: /${this.commandName} [extend|restore]`, "info");
       return;
@@ -113,6 +109,27 @@ export class ContextController {
     this.invalidate(ctx);
     this.disposed = true;
     this.preferences.clear();
+  }
+
+  getStatus(ctx: ContextHost): ContextStatus | undefined {
+    if (this.disposed) return undefined;
+    const model = ctx.model;
+    if (!model) return undefined;
+    const profile = contextProfile(model);
+    const standardWindow = baseline(ctx, model);
+    let extendedWindow: number | undefined;
+    if (profile && standardWindow !== undefined) {
+      extendedWindow = Math.max(standardWindow, profile.extendedWindow);
+    }
+    return {
+      model,
+      usage: ctx.getContextUsage(),
+      standardWindow,
+      extendedWindow,
+      desiredExtended: this.preferences.get(modelKey(model)),
+      replayPaused: this.replayPaused,
+      branch: ctx.sessionManager.getBranch(),
+    };
   }
 
   private async change(ctx: ContextHost, extended: boolean, command: boolean): Promise<void> {
@@ -187,31 +204,6 @@ export class ContextController {
     const preference: ContextPreference = { provider: model.provider, modelId: model.id, extended };
     this.pi.appendEntry(CONTEXT_ENTRY, preference);
     this.preferences.set(key, extended);
-  }
-
-  private status(ctx: ContextHost): void {
-    const model = ctx.model;
-    if (!model) {
-      ctx.ui.notify("No model selected.", "info");
-      return;
-    }
-    const profile = contextProfile(model);
-    const standardWindow = baseline(ctx, model);
-    ctx.ui.notify(
-      formatContextStatus({
-        model,
-        usage: ctx.getContextUsage(),
-        standardWindow,
-        extendedWindow:
-          profile && standardWindow !== undefined
-            ? Math.max(standardWindow, profile.extendedWindow)
-            : undefined,
-        desiredExtended: this.preferences.get(modelKey(model)),
-        replayPaused: this.replayPaused,
-        branch: ctx.sessionManager.getBranch(),
-      }),
-      "info",
-    );
   }
 
   private usageAllowsReduction(ctx: ContextHost, target: number): boolean {
