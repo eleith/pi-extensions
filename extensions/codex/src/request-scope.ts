@@ -21,12 +21,15 @@ export function matchesDirectCodexSelection(
   payload: unknown,
   ctx: DirectCodexHost,
 ): payload is Record<string, unknown> {
+  if (!isDirectCodexSelection(ctx)) return false;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  return "model" in payload && payload.model === ctx.model?.id;
+}
+
+export function isDirectCodexSelection(ctx: DirectCodexHost): boolean {
   const model = ctx.model;
   if (!model || model.provider !== PROVIDER || model.api !== "openai-codex-responses") return false;
   if (!officialBase(model.baseUrl)) return false;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-  if (!("model" in payload) || payload.model !== model.id) return false;
-
   const registry = ctx.modelRegistry;
   if (!officialBase(registry.getProvider(PROVIDER)?.baseUrl)) return false;
   if (registry.getRegisteredProviderConfig(PROVIDER) !== undefined) return false;
