@@ -226,16 +226,23 @@ async function requestAccountJson(
 function responseError(response: Response): CodexAccountError {
   if (response.status === 401 || response.status === 403) return authError();
   if (response.status === 429) {
-    const header = response.headers.get("retry-after");
-    let retryAfterMs: number | undefined;
-    if (header) {
-      const seconds = Number(header);
-      const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
-      if (Number.isFinite(delay) && delay >= 0) retryAfterMs = delay;
-    }
-    return new CodexAccountError("http", "Codex account service is rate limited.", retryAfterMs);
+    return new CodexAccountError(
+      "http",
+      "Codex account service is rate limited.",
+      parseRetryAfterMs(response.headers.get("retry-after")),
+    );
   }
   return new CodexAccountError("http", `Codex account request failed (HTTP ${response.status}).`);
+}
+
+function parseRetryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const seconds = Number(header);
+  let delayMs: number;
+  if (Number.isFinite(seconds)) delayMs = seconds * 1000;
+  else delayMs = Date.parse(header) - Date.now();
+  if (!Number.isFinite(delayMs) || delayMs < 0) return undefined;
+  return delayMs;
 }
 
 function discardBody(response: Response): void {

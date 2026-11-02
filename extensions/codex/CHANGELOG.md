@@ -1,5 +1,11 @@
 # @eleith-pi/codex
 
+## 0.2.1
+
+### Patch Changes
+
+- Separate Codex Retry-After parsing from HTTP error classification and strengthen rate-limit regression coverage. Correct Codex names, links, installation and command instructions in the READMEs.
+
 ## 0.2.0
 
 ### Minor Changes

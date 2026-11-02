@@ -323,17 +323,63 @@ it.each([401, 403])("reports HTTP %s without exposing the server's error body", 
   expect(cancel).toHaveBeenCalledOnce();
 });
 
-it("returns retry-after information without automatically retrying", async () => {
-  const f = fixture();
-  f.fetcher.mockResolvedValue(
-    new Response("private error", { status: 429, headers: { "Retry-After": "60" } }),
-  );
-  await expect(fetchCodexUsage(f.registry, undefined, f.fetcher)).rejects.toMatchObject({
+it.each([
+  { label: "seconds", header: "60", retryAfterMs: 60_000 },
+  { label: "zero seconds", header: "0", retryAfterMs: 0 },
+  { label: "fractional seconds", header: "1.5", retryAfterMs: 1500 },
+  { label: "numeric exponent notation", header: "1e1", retryAfterMs: 10_000 },
+  { label: "a future HTTP date", header: "Wed, 02 Jan 2030 03:05:05 GMT", retryAfterMs: 60_000 },
+  { label: "the current HTTP date", header: "Wed, 02 Jan 2030 03:04:05 GMT", retryAfterMs: 0 },
+  { label: "a past HTTP date", header: "Wed, 02 Jan 2030 03:03:05 GMT", retryAfterMs: undefined },
+  { label: "a malformed value", header: "later", retryAfterMs: undefined },
+  { label: "negative seconds", header: "-1", retryAfterMs: undefined },
+  { label: "a non-finite value", header: "Infinity", retryAfterMs: undefined },
+  { label: "an empty header", header: "", retryAfterMs: undefined },
+  { label: "a missing header", header: null, retryAfterMs: undefined },
+])(
+  "reports Retry-After with $label without automatically retrying",
+  async ({ header, retryAfterMs }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-02T03:04:05Z"));
+    const account = fixture();
+    const headers = new Headers();
+    if (header !== null) headers.set("Retry-After", header);
+    const response = new Response("private error", { status: 429, headers });
+    const discard = vi.spyOn(response.body!, "cancel");
+    account.fetcher.mockResolvedValue(response);
+
+    await expect(
+      fetchCodexUsage(account.registry, undefined, account.fetcher),
+    ).rejects.toMatchObject({
+      code: "http",
+      message: "Codex account service is rate limited.",
+      retryAfterMs,
+    });
+    expect(account.fetcher).toHaveBeenCalledOnce();
+    expect(discard).toHaveBeenCalledOnce();
+  },
+);
+
+it("returns the catalog's HTTP-date retry delay without retrying or exposing its body", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2030-01-02T03:04:05Z"));
+  const account = fixture();
+  const response = new Response("private catalog error", {
+    status: 429,
+    headers: { "Retry-After": "Wed, 02 Jan 2030 03:05:05 GMT" },
+  });
+  const discard = vi.spyOn(response.body!, "cancel");
+  account.fetcher.mockResolvedValue(response);
+
+  await expect(
+    fetchCodexModelCatalog(account.registry, undefined, account.fetcher),
+  ).rejects.toMatchObject({
     code: "http",
     message: "Codex account service is rate limited.",
     retryAfterMs: 60_000,
   });
-  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(account.fetcher).toHaveBeenCalledOnce();
+  expect(discard).toHaveBeenCalledOnce();
 });
 
 it("does not follow or display a redirected endpoint", async () => {
