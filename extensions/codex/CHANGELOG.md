@@ -1,4 +1,14 @@
-# @eleith-pi/context-codex
+# @eleith-pi/codex
+
+## 0.2.0
+
+### Minor Changes
+
+- 2e10c83: Rename context-codex to codex while preserving context controls and branch state. Add Codex account usage reporting and explicit branch-local, per-model fast controls using Pi's existing login, conservative catalog eligibility, and higher-consumption confirmation for priority requests on supported direct legacy Codex selections.
+
+### Patch Changes
+
+- 4b19b7d: Make Codex controls easier to use with matching context and fast on/off/toggle commands, a shared local dashboard, descriptive subcommand completion, clearer allowance reports, and a native cancellable loader for account usage requests.
 
 ## 0.1.1
 
