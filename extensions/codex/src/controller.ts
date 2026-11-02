@@ -92,16 +92,20 @@ export class ContextController {
   async handle(args: string, ctx: ContextHost): Promise<void> {
     if (this.disposed) return;
     const action = args.trim().toLowerCase();
-    if (action !== "extend" && action !== "restore") {
-      ctx.ui.notify(`Usage: /${this.commandName} [extend|restore]`, "info");
+    if (action !== "on" && action !== "off" && action !== "toggle") {
+      ctx.ui.notify(`Usage: /${this.commandName} context [on|off|toggle]`, "warning");
       return;
     }
     if (this.changing || this.selecting || !ctx.isIdle()) {
       ctx.ui.notify("Wait for the current run or context change to finish.", "warning");
       return;
     }
+    const model = ctx.model;
+    const extended =
+      action === "on" ||
+      (action === "toggle" && (!model || this.preferences.get(modelKey(model)) !== true));
     this.replayPaused = false;
-    await this.change(ctx, action === "extend", true);
+    await this.change(ctx, extended, true);
   }
 
   shutdown(ctx?: ContextHost): void {
@@ -148,7 +152,7 @@ export class ContextController {
     const standardWindow = baseline(ctx, current);
     if (standardWindow === undefined) {
       ctx.ui.notify(
-        "Catalog baseline is unknown or incompatible. Reselect a catalog model and inspect context status before changing the window.",
+        `Catalog baseline is unknown or incompatible. Reselect a catalog model and inspect /${this.commandName} before changing the window.`,
         "warning",
       );
       return;
@@ -280,7 +284,7 @@ export class ContextController {
       if (!accepted) {
         this.replayPaused = true;
         ctx.ui.notify(
-          "Could not change context: provider authentication is unavailable. Automatic replay is paused; explicitly extend or restore after checking authentication.",
+          `Could not change context: provider authentication is unavailable. Automatic replay is paused; explicitly use /${this.commandName} context on or /${this.commandName} context off after checking authentication.`,
           "warning",
         );
         return false;
@@ -325,7 +329,7 @@ export class ContextController {
   private uncertain(ctx: ContextHost): void {
     this.replayPaused = true;
     ctx.ui.notify(
-      `Context change interrupted or uncertain. In-flight selection cannot be cancelled and may replace your intended model. Inspect /${this.commandName}, reselect the intended model if needed, then explicitly extend or restore. Automatic replay is paused; try /${this.commandName} again when ready.`,
+      `Context change interrupted or uncertain. In-flight selection cannot be cancelled and may replace your intended model. Inspect /${this.commandName}, reselect the intended model if needed, then explicitly use /${this.commandName} context on or /${this.commandName} context off. Automatic replay is paused.`,
       "warning",
     );
   }

@@ -62,7 +62,7 @@ async function load(prefix = "eleith") {
     isIdle: () => true,
     getContextUsage: () => undefined,
     modelRegistry: {},
-    ui: { notify, confirm: vi.fn(async () => false), setStatus: vi.fn() },
+    ui: { notify, confirm: vi.fn(async () => false) },
     sessionManager: { getBranch: () => [], getSessionId: () => "session", getLeafId: () => null },
   } as unknown as ExtensionCommandContext;
   await codex(pi as unknown as ExtensionAPI);
@@ -89,11 +89,15 @@ it("registers only the configured native command once after binding", async () =
   await context.emit("session_start");
   expect(context.pi.registerCommand).toHaveBeenCalledTimes(1);
   expect(context.pi.registerCommand.mock.calls[0]?.[0]).toBe("personal:codex");
-  expect(await context.command().getArgumentCompletions?.("e")).toEqual([
-    expect.objectContaining({ value: "extend", label: "extend", description: expect.any(String) }),
+  expect(await context.command().getArgumentCompletions?.("c")).toEqual([
+    expect.objectContaining({
+      value: "context",
+      label: "context",
+      description: expect.any(String),
+    }),
   ]);
   const rootChoices = await context.command().getArgumentCompletions?.("");
-  expect(rootChoices?.map(({ value }) => value)).toEqual(["extend", "restore", "usage", "fast"]);
+  expect(rootChoices?.map(({ value }) => value)).toEqual(["context", "fast", "usage"]);
   expect(await context.command().getArgumentCompletions?.("fast o")).toEqual([
     expect.objectContaining({
       value: "fast on",
@@ -109,12 +113,14 @@ it("registers only the configured native command once after binding", async () =
 it("handles no argument as status rather than an invalid default action", async () => {
   const context = await load();
   await context.emit("session_start");
-  await context.command().handler("", context.ctx);
-  expect(context.notify).toHaveBeenLastCalledWith("No model selected.", "info");
+  for (const input of ["", "context", "fast"]) {
+    await context.command().handler(input, context.ctx);
+    expect(context.notify).toHaveBeenLastCalledWith("No model selected.", "info");
+  }
   expect(context.pi.setModel).not.toHaveBeenCalled();
   await context.command().handler("extend restore", context.ctx);
   expect(context.notify).toHaveBeenLastCalledWith(
-    "Usage: /eleith:codex [extend|restore|usage|fast]",
+    "Usage: /eleith:codex [context|fast|usage]",
     "warning",
   );
 });
@@ -137,21 +143,24 @@ it("wires restore/reconcile hooks without provider calls for an unsupported mode
   expect(readCodexAuthScope).not.toHaveBeenCalled();
 });
 
-it("routes fast subcommands without allowing trailing arguments on other actions", async () => {
+it("rejects removed commands and additional control arguments without side effects", async () => {
   const context = await load("personal");
   await context.emit("session_start");
-  await context.command().handler("fast status", context.ctx);
-  expect(context.notify).toHaveBeenLastCalledWith("No model selected.", "info");
-  await context.command().handler("fast off extra", context.ctx);
-  expect(context.notify).toHaveBeenLastCalledWith(
-    "Usage: /personal:codex fast [on|off|toggle|status|reset]",
-    "warning",
-  );
-  await context.command().handler("restore extra", context.ctx);
-  expect(context.notify).toHaveBeenLastCalledWith(
-    "Usage: /personal:codex [extend|restore|usage|fast]",
-    "warning",
-  );
+  const rootUsage = "Usage: /personal:codex [context|fast|usage]";
+  const cases = [
+    ["extend", rootUsage],
+    ["restore", rootUsage],
+    ["usage extra", rootUsage],
+    ["fast status", "Usage: /personal:codex fast [on|off|toggle]"],
+    ["fast reset", "Usage: /personal:codex fast [on|off|toggle]"],
+    ["fast off extra", "Usage: /personal:codex fast [on|off|toggle]"],
+    ["context status", "Usage: /personal:codex context [on|off|toggle]"],
+    ["context on extra", "Usage: /personal:codex context [on|off|toggle]"],
+  ] as const;
+  for (const [input, usage] of cases) {
+    await context.command().handler(input, context.ctx);
+    expect(context.notify).toHaveBeenLastCalledWith(usage, "warning");
+  }
   expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
   expect(readCodexAuthScope).not.toHaveBeenCalled();
   expect(fetchCodexUsage).not.toHaveBeenCalled();
@@ -245,6 +254,18 @@ it("combines context and fast mode in a read-only dashboard with the configured 
   expect(readCodexAuthScope).not.toHaveBeenCalled();
   expect(context.pi.appendEntry).not.toHaveBeenCalled();
   expect(context.pi.setModel).not.toHaveBeenCalled();
+  const dashboard = context.notify.mock.calls[0][0];
+  for (const input of ["context", "fast"]) {
+    await context.command().handler(input, ctx);
+    expect(context.notify).toHaveBeenLastCalledWith(dashboard, "info");
+  }
+  expect(context.notify).toHaveBeenCalledTimes(3);
+  expect(getProviderAuth).not.toHaveBeenCalled();
+  expect(fetchCodexUsage).not.toHaveBeenCalled();
+  expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
+  expect(readCodexAuthScope).not.toHaveBeenCalled();
+  expect(context.pi.appendEntry).not.toHaveBeenCalled();
+  expect(context.pi.setModel).not.toHaveBeenCalled();
   await context.emit("session_shutdown");
   const notify = context.notify;
   Object.defineProperty(ctx, "ui", {
@@ -252,8 +273,8 @@ it("combines context and fast mode in a read-only dashboard with the configured 
       throw new Error("Expired UI");
     },
   });
-  await context.command().handler("", ctx);
-  expect(notify).toHaveBeenCalledOnce();
+  for (const input of ["", "context", "fast"]) await context.command().handler(input, ctx);
+  expect(notify).toHaveBeenCalledTimes(3);
 });
 
 it("fails invalid prefix settings before registering any capabilities", async () => {

@@ -40,56 +40,62 @@ afterEach(() => {
   rmSync(emptyFileDirectory, { recursive: true, force: true });
 });
 
-it("reopens fast controls on a typed argument prefix and replaces the whole argument", async () => {
-  const { editor, getArgumentCompletions, getSuggestions } = createEditor();
-  await acceptCodexCommand(editor);
+it.each([
+  ["fast", "Request priority processing", "Request standard processing"],
+  ["context", "Use the larger local context window", "Use the catalog baseline context window"],
+])(
+  "reopens %s controls on a typed prefix and replaces the whole argument",
+  async (group, onHelp, offHelp) => {
+    const { editor, getArgumentCompletions, getSuggestions } = createEditor();
+    await acceptCodexCommand(editor);
 
-  typeText(editor, "fast");
-  await vi.waitFor(
-    () => {
-      expect(getArgumentCompletions).toHaveBeenLastCalledWith("fast");
-      expect(editor.isShowingAutocomplete()).toBe(true);
-    },
-    { timeout: 1_000 },
-  );
-  editor.handleInput("\t");
-  expect(editor.getText()).toBe("/eleith:codex fast");
-  expect(editor.isShowingAutocomplete()).toBe(false);
+    typeText(editor, group);
+    await vi.waitFor(
+      () => {
+        expect(getArgumentCompletions).toHaveBeenLastCalledWith(group);
+        expect(editor.isShowingAutocomplete()).toBe(true);
+      },
+      { timeout: 1_000 },
+    );
+    editor.handleInput("\t");
+    expect(editor.getText()).toBe(`/eleith:codex ${group}`);
+    expect(editor.isShowingAutocomplete()).toBe(false);
 
-  const lookupsBeforeSpace = getSuggestions.mock.calls.length;
-  editor.handleInput(" ");
-  await vi.advanceTimersByTimeAsync(200);
-  expect(editor.getText()).toBe("/eleith:codex fast ");
-  expect(editor.isShowingAutocomplete()).toBe(false);
-  expect(getSuggestions).toHaveBeenCalledTimes(lookupsBeforeSpace);
+    const lookupsBeforeSpace = getSuggestions.mock.calls.length;
+    editor.handleInput(" ");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(editor.getText()).toBe(`/eleith:codex ${group} `);
+    expect(editor.isShowingAutocomplete()).toBe(false);
+    expect(getSuggestions).toHaveBeenCalledTimes(lookupsBeforeSpace);
 
-  editor.handleInput("o");
-  await vi.waitFor(
-    () => {
-      expect(getArgumentCompletions).toHaveBeenLastCalledWith("fast o");
-      expect(editor.isShowingAutocomplete()).toBe(true);
-    },
-    { timeout: 1_000 },
-  );
+    editor.handleInput("o");
+    await vi.waitFor(
+      () => {
+        expect(getArgumentCompletions).toHaveBeenLastCalledWith(`${group} o`);
+        expect(editor.isShowingAutocomplete()).toBe(true);
+      },
+      { timeout: 1_000 },
+    );
 
-  // Editor exposes menu visibility, not its items. Observe the real provider's
-  // public result and the rendered list instead of inspecting editor internals.
-  const lookup = getSuggestions.mock.results.at(-1);
-  if (lookup?.type !== "return") throw new Error("Native suggestion lookup did not return");
-  const suggestions = await lookup.value;
-  expect(suggestions?.prefix).toBe("fast o");
-  expect(suggestions?.items.map(({ value, label }) => ({ value, label }))).toEqual([
-    { value: "fast on", label: "on" },
-    { value: "fast off", label: "off" },
-  ]);
-  const rendered = editor.render(120).join("\n");
-  expect(rendered).toContain("Request priority processing");
-  expect(rendered).toContain("Request standard processing");
+    // Editor exposes menu visibility, not its items. Observe the real provider's
+    // public result and the rendered list instead of inspecting editor internals.
+    const lookup = getSuggestions.mock.results.at(-1);
+    if (lookup?.type !== "return") throw new Error("Native suggestion lookup did not return");
+    const suggestions = await lookup.value;
+    expect(suggestions?.prefix).toBe(`${group} o`);
+    expect(suggestions?.items.map(({ value, label }) => ({ value, label }))).toEqual([
+      { value: `${group} on`, label: "on" },
+      { value: `${group} off`, label: "off" },
+    ]);
+    const rendered = editor.render(120).join("\n");
+    expect(rendered).toContain(onHelp);
+    expect(rendered).toContain(offHelp);
 
-  editor.handleInput("\t");
-  expect(editor.getText()).toBe("/eleith:codex fast on");
-  expect(editor.isShowingAutocomplete()).toBe(false);
-});
+    editor.handleInput("\t");
+    expect(editor.getText()).toBe(`/eleith:codex ${group} on`);
+    expect(editor.isShowingAutocomplete()).toBe(false);
+  },
+);
 
 it("routes empty-prefix Tab through the native file gate, not Codex arguments", async () => {
   const { editor, getArgumentCompletions, getSuggestions, fileCompletionGate } = createEditor();

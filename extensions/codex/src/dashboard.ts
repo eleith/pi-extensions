@@ -18,7 +18,7 @@ export function formatCodexDashboard(
     formatContextSummary(context, now),
     "",
     `/${commandName} usage — account allowance`,
-    `/${commandName} extend|restore — context window`,
-    `/${commandName} fast — priority controls (type "fast o" for on/off suggestions)`,
+    `/${commandName} context on|off|toggle — local context window (type "context o" for on/off suggestions)`,
+    `/${commandName} fast on|off|toggle — priority controls (type "fast o" for on/off suggestions)`,
   ].join("\n");
 }

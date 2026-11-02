@@ -18,11 +18,9 @@ import {
 } from "./fast-state.ts";
 import {
   formatFastStatus,
-  formatFastDiagnostics,
   type FastStatus,
   type FastRequestPolicy,
   type ObservedTier,
-  type RequestedTier,
 } from "./fast-status.ts";
 import { modelKey } from "./profiles.ts";
 import {
@@ -67,7 +65,6 @@ interface CachedEligibility {
 interface ModelTierActivity {
   modelKey: string;
   sessionId: string;
-  requested: RequestedTier | undefined;
   observed: ObservedTier | undefined;
   conflict: boolean;
 }
@@ -115,7 +112,6 @@ export class FastController {
       preference: this.preferenceFor(selectedModelKey),
       eligibility,
       requestPolicy: this.requestPolicy(ctx),
-      lastRequested: activity?.requested,
       lastObserved: activity?.observed,
       conflict: activity?.conflict ?? false,
     };
@@ -124,19 +120,8 @@ export class FastController {
   async handle(args: string, ctx: FastHost): Promise<void> {
     if (this.disposed) return;
     const action = args.trim().toLowerCase();
-    if (!action) {
-      this.report(ctx);
-      return;
-    }
-    if (action === "status") {
-      const status = this.getStatus(ctx);
-      let message = "No model selected.";
-      if (status) message = formatFastDiagnostics(status);
-      ctx.ui.notify(message, "info");
-      return;
-    }
-    if (!["on", "off", "toggle", "reset"].includes(action)) {
-      ctx.ui.notify(`Usage: /${this.commandName} fast [on|off|toggle|status|reset]`, "warning");
+    if (!["on", "off", "toggle"].includes(action)) {
+      ctx.ui.notify(`Usage: /${this.commandName} fast [on|off|toggle]`, "warning");
       return;
     }
     if (this.pendingPreparation || !ctx.isIdle()) {
@@ -148,18 +133,11 @@ export class FastController {
       ctx.ui.notify("No model selected.", "warning");
       return;
     }
-    let mode: FastPreference;
-    if (action === "reset") mode = "inherit";
-    else if (action === "off") mode = "off";
+    let mode: "on" | "off";
+    if (action === "off") mode = "off";
     else if (action === "toggle" && this.preferenceFor(modelKey(model)) === "on") mode = "off";
     else mode = "on";
 
-    // Reset only removes our choice; it is safe even after the selection leaves supported scope.
-    if (mode === "inherit") {
-      this.rememberChoice(ctx, mode);
-      this.report(ctx);
-      return;
-    }
     if (!isDirectCodexSelection(ctx)) {
       ctx.ui.notify(
         "Fast controls require a direct official legacy Codex model with Pi OAuth and no provider override.",
@@ -207,7 +185,6 @@ export class FastController {
     const activity: ModelTierActivity = {
       modelKey: modelKey(ctx.model),
       sessionId: ctx.sessionManager.getSessionId(),
-      requested: undefined,
       observed: undefined,
       conflict: false,
     };
@@ -218,7 +195,6 @@ export class FastController {
       activity.conflict = true;
       return;
     }
-    activity.requested = policy;
     if (payload.service_tier === policy) return;
     return { ...payload, service_tier: policy };
   }
@@ -426,7 +402,7 @@ export class FastController {
       return;
     }
     const summary = formatFastStatus(status);
-    const hint = `/${this.commandName} fast on|off|toggle|reset · status for details`;
+    const hint = `/${this.commandName} fast on|off|toggle`;
     ctx.ui.notify(`${summary}\n\n${hint}`, "info");
   }
 }

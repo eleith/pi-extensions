@@ -34,43 +34,29 @@ const catalog: CodexModelCatalog = {
 };
 
 describe("commands and ownership", () => {
-  it("reports bare fast briefly without confirmation, auth IO, catalog IO or writes", async () => {
-    const fast = createFastControllerFixture();
-    fast.ctx.sessionManager.getBranch.mockReturnValue([choice("on")]);
-    fast.controller.restore(fast.ctx);
-    await fast.controller.handle("", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenCalledExactlyOnceWith(
-      expect.stringContaining("Fast: Paused — model eligibility needs checking"),
-      "info",
-    );
-    expect(fast.ctx.ui.notify).not.toHaveBeenCalledWith(
-      expect.stringContaining("Preference:"),
-      expect.anything(),
-    );
-    expect(fast.ctx.ui.confirm).not.toHaveBeenCalled();
-    expect(fast.readAuthScope).not.toHaveBeenCalled();
-    expect(fast.ctx.modelRegistry.getProviderAuth).not.toHaveBeenCalled();
-    expect(fast.fetchCatalog).not.toHaveBeenCalled();
-    expect(fast.appendEntry).not.toHaveBeenCalled();
-  });
-
-  it("reports explicit status technically without confirmation, auth IO, catalog IO or writes", async () => {
-    const fast = createFastControllerFixture();
-    fast.ctx.sessionManager.getBranch.mockReturnValue([choice("on")]);
-    fast.controller.restore(fast.ctx);
-    await fast.controller.handle("  STATUS  ", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenCalledExactlyOnceWith(
-      expect.stringContaining(
-        "Preference: on\nEligibility: unknown\nNext request policy: suspended",
-      ),
-      "info",
-    );
-    expect(fast.ctx.ui.confirm).not.toHaveBeenCalled();
-    expect(fast.readAuthScope).not.toHaveBeenCalled();
-    expect(fast.ctx.modelRegistry.getProviderAuth).not.toHaveBeenCalled();
-    expect(fast.fetchCatalog).not.toHaveBeenCalled();
-    expect(fast.appendEntry).not.toHaveBeenCalled();
-  });
+  it.each(["", "   ", "status", "  STATUS  ", "reset", "enable", "disable", "on extra"])(
+    "rejects the unsupported action %j without confirmation, IO or writes",
+    async (action) => {
+      const fast = createFastControllerFixture();
+      fast.ctx.sessionManager.getBranch.mockReturnValue([choice("on")]);
+      fast.controller.restore(fast.ctx);
+      await fast.controller.handle(action, fast.ctx);
+      expect(fast.ctx.ui.notify).toHaveBeenCalledExactlyOnceWith(
+        "Usage: /eleith:codex fast [on|off|toggle]",
+        "warning",
+      );
+      expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+        preference: "on",
+        eligibility: "unknown",
+        requestPolicy: "suspended",
+      });
+      expect(fast.ctx.ui.confirm).not.toHaveBeenCalled();
+      expect(fast.readAuthScope).not.toHaveBeenCalled();
+      expect(fast.ctx.modelRegistry.getProviderAuth).not.toHaveBeenCalled();
+      expect(fast.fetchCatalog).not.toHaveBeenCalled();
+      expect(fast.appendEntry).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not discover or persist anything when the cost confirmation is declined", async () => {
     const fast = createFastControllerFixture();
@@ -110,12 +96,11 @@ describe("commands and ownership", () => {
     const fast = createFastControllerFixture();
     await fast.controller.handle("on extra", fast.ctx);
     expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      "Usage: /eleith:codex fast [on|off|toggle|status|reset]",
+      "Usage: /eleith:codex fast [on|off|toggle]",
       "warning",
     );
     fast.ctx.isIdle.mockReturnValue(false);
-    for (const action of ["on", "off", "toggle", "reset"])
-      await fast.controller.handle(action, fast.ctx);
+    for (const action of ["on", "off", "toggle"]) await fast.controller.handle(action, fast.ctx);
     expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
       expect.stringContaining("Wait for the current run"),
       "warning",
@@ -204,7 +189,7 @@ describe("commands and ownership", () => {
     },
   );
 
-  it("copies a frozen payload for explicit default, preserves fields, then resets with an inherit tombstone", async () => {
+  it("copies a frozen payload for explicit default, preserves fields, then restores a legacy inherit entry", async () => {
     const fast = createFastControllerFixture();
     const input = Object.freeze([{ role: "user", content: "hello" }]);
     const payload = Object.freeze({
@@ -216,7 +201,7 @@ describe("commands and ownership", () => {
     });
     await fast.controller.handle("off", fast.ctx);
     expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Fast: Off (standard requested)"),
+      "Fast: Off (standard requested)\n\n/eleith:codex fast on|off|toggle",
       "info",
     );
     const transformed = fast.controller.transform(payload, fast.ctx);
@@ -230,38 +215,36 @@ describe("commands and ownership", () => {
     ).toBeUndefined();
     await fast.controller.handle("off", fast.ctx);
     expect(fast.appendEntry).toHaveBeenCalledOnce();
-    await fast.controller.handle("reset", fast.ctx);
-    expect(fast.appendEntry).toHaveBeenLastCalledWith(FAST_ENTRY, {
-      provider: model.provider,
-      modelId: model.id,
-      mode: "inherit",
-    });
+    fast.ctx.sessionManager.getBranch.mockReturnValue([choice("off"), choice("inherit")]);
+    fast.controller.restore(fast.ctx);
     expect(fast.controller.transform(payload, fast.ctx)).toBeUndefined();
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Fast: Provider default (no override)"),
-      "info",
-    );
-    await fast.controller.handle("reset", fast.ctx);
-    expect(fast.appendEntry).toHaveBeenCalledTimes(2);
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      preference: "inherit",
+      requestPolicy: "untouched",
+    });
+    await fast.controller.prepare(fast.ctx);
+    fast.controller.restore(fast.ctx);
+    expect(fast.appendEntry).toHaveBeenCalledOnce();
     expect(fast.ctx.ui.confirm).not.toHaveBeenCalled();
     expect(fast.readAuthScope).not.toHaveBeenCalled();
     expect(fast.fetchCatalog).not.toHaveBeenCalled();
   });
 
-  it("can remove its saved choice after the selection leaves direct scope", async () => {
+  it("restores a legacy inherit entry after the selection leaves direct scope without writing", async () => {
     const fast = createFastControllerFixture();
     await fast.controller.handle("off", fast.ctx);
     fast.ctx.modelRegistry.isUsingOAuth.mockReturnValue(false);
-    await fast.controller.handle("reset", fast.ctx);
-    expect(fast.appendEntry).toHaveBeenLastCalledWith(FAST_ENTRY, {
-      provider: model.provider,
-      modelId: model.id,
-      mode: "inherit",
+    fast.ctx.sessionManager.getBranch.mockReturnValue([choice("off"), choice("inherit")]);
+    fast.controller.restore(fast.ctx);
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      preference: "inherit",
+      requestPolicy: "outside scope",
     });
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Fast: Unavailable for this model/provider"),
-      "info",
-    );
+    expect(fast.controller.transform({ model: model.id }, fast.ctx)).toBeUndefined();
+    expect(fast.appendEntry).toHaveBeenCalledOnce();
+    expect(fast.ctx.ui.confirm).not.toHaveBeenCalled();
+    expect(fast.readAuthScope).not.toHaveBeenCalled();
+    expect(fast.fetchCatalog).not.toHaveBeenCalled();
   });
 
   it.each(["on", "off"])(
@@ -273,48 +256,18 @@ describe("commands and ownership", () => {
       const payload = Object.freeze({ model: model.id, service_tier: "flex", input: [] });
       expect(fast.controller.transform(payload, fast.ctx)).toBeUndefined();
       expect(payload.service_tier).toBe("flex");
-      await fast.controller.handle("status", fast.ctx);
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining("Tier conflict: an existing non-owned tier was left untouched."),
-        "info",
-      );
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining("Last requested tier: unknown"),
-        "info",
-      );
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining(`Next request policy: ${tier}`),
-        "info",
-      );
-      await fast.controller.handle("", fast.ctx);
-      const headline =
-        mode === "on" ? "Fast: On (priority requested)" : "Fast: Off (standard requested)";
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining(headline),
-        "info",
-      );
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining("Last request kept another tier setting; not overridden."),
-        "info",
-      );
+      expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+        conflict: true,
+        requestPolicy: tier,
+      });
       expect(fast.controller.transform({ model: model.id }, fast.ctx)).toEqual({
         model: model.id,
         service_tier: tier,
       });
-      await fast.controller.handle("status", fast.ctx);
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.not.stringContaining("Tier conflict:"),
-        "info",
-      );
-      await fast.controller.handle("", fast.ctx);
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining(headline),
-        "info",
-      );
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.not.stringContaining("Last request kept another tier setting"),
-        "info",
-      );
+      expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+        conflict: false,
+        requestPolicy: tier,
+      });
     },
   );
 
@@ -383,13 +336,11 @@ describe("branch replay and preparation", () => {
       stream({ type: "response.completed", response: { service_tier: "default" } }),
       fast.ctx,
     );
-    await fast.controller.handle("status", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining(
-        "Preference: on\nEligibility: unknown\nNext request policy: suspended",
-      ),
-      "info",
-    );
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      preference: "on",
+      eligibility: "unknown",
+      requestPolicy: "suspended",
+    });
     expect(fast.readAuthScope).toHaveBeenCalledOnce();
     expect(fast.fetchCatalog).toHaveBeenCalledOnce();
     expect(fast.appendEntry).toHaveBeenCalledOnce();
@@ -436,13 +387,11 @@ describe("branch replay and preparation", () => {
     await fast.controller.prepare(fast.ctx);
     expect(fast.fetchCatalog).toHaveBeenCalledTimes(2);
     expect(fast.controller.transform({ model: model.id }, fast.ctx)).toBeUndefined();
-    await fast.controller.handle("status", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining(
-        "Preference: on\nEligibility: unsupported\nNext request policy: suspended",
-      ),
-      "info",
-    );
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      preference: "on",
+      eligibility: "unsupported",
+      requestPolicy: "suspended",
+    });
     fast.readAuthScope.mockResolvedValue("scope-c");
     fast.fetchCatalog.mockResolvedValue({ ...catalog, authScope: "scope-c" });
     await fast.controller.prepare(fast.ctx);
@@ -492,7 +441,11 @@ describe("branch replay and preparation", () => {
       stream({ type: "response.completed", response: { service_tier: "priority" } }),
       fast.ctx,
     );
-    await fast.controller.handle("status", fast.ctx);
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      preference: "on",
+      requestPolicy: "suspended",
+      lastObserved: "priority",
+    });
     expect(fast.fetchCatalog).toHaveBeenCalledOnce();
     expect(fast.readAuthScope).toHaveBeenCalledTimes(2);
     await fast.controller.prepare(fast.ctx);
@@ -520,11 +473,10 @@ describe("branch replay and preparation", () => {
         "warning",
       );
       expect(fast.controller.transform({ model: model.id }, fast.ctx)).toBeUndefined();
-      await fast.controller.handle("status", fast.ctx);
-      expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining("Preference: on"),
-        "info",
-      );
+      expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+        preference: "on",
+        requestPolicy: "suspended",
+      });
       expect(fast.appendEntry).not.toHaveBeenCalled();
     },
   );
@@ -633,7 +585,8 @@ describe("asynchronous ownership", () => {
       expect(fast.readAuthScope).not.toHaveBeenCalled();
       expect(fast.fetchCatalog).not.toHaveBeenCalled();
       expect(fast.appendEntry).not.toHaveBeenCalled();
-      await fast.controller.handle("status", fast.ctx);
+      expect(fast.controller.getStatus(fast.ctx)).toBeUndefined();
+      await fast.controller.handle("on", fast.ctx);
       await fast.controller.prepare(fast.ctx);
       fast.controller.restore(fast.ctx);
       expect(fast.controller.transform({ model: model.id }, fast.ctx)).toBeUndefined();
@@ -702,31 +655,26 @@ describe("asynchronous ownership", () => {
 });
 
 describe("provider stream observations", () => {
-  it("reports an observed default independently of requested priority, without changing the next preference", async () => {
+  it("reports an observed default independently of the priority payload and next-request policy", async () => {
     const fast = createFastControllerFixture();
     await fast.controller.handle("on", fast.ctx);
     const payload = Object.freeze({ model: model.id, input: [], service_tier: "priority" });
-    expect(fast.controller.transform(payload, fast.ctx)).toBeUndefined();
+    const transformed = fast.controller.transform(payload, fast.ctx);
+    expect(transformed).toBeUndefined();
+    expect(transformed ?? payload).toEqual({
+      model: model.id,
+      input: [],
+      service_tier: "priority",
+    });
     fast.controller.observe(
       stream({ type: "response.completed", response: { service_tier: "default" } }),
       fast.ctx,
     );
-    await fast.controller.handle("status", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining(
-        "Next request policy: priority\nLast requested tier: priority\nLast observed tier: default",
-      ),
-      "info",
-    );
-    await fast.controller.handle("", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Fast: On (priority requested)\nLast reported tier: Standard"),
-      "info",
-    );
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.not.stringContaining("No response tier reported yet."),
-      "info",
-    );
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      preference: "on",
+      requestPolicy: "priority",
+      lastObserved: "default",
+    });
     expect(fast.controller.transform({ model: model.id }, fast.ctx)?.service_tier).toBe("priority");
     expect(fast.fetchCatalog).toHaveBeenCalledOnce();
     expect(fast.readAuthScope).toHaveBeenCalledOnce();
@@ -738,17 +686,19 @@ describe("provider stream observations", () => {
   ])("reports missing or unrecognized terminal tier metadata as unknown: %j", async (data) => {
     const fast = createFastControllerFixture();
     await fast.controller.handle("off", fast.ctx);
-    fast.controller.transform({ model: model.id }, fast.ctx);
+    expect(fast.controller.transform({ model: model.id }, fast.ctx)).toEqual({
+      model: model.id,
+      service_tier: "default",
+    });
     fast.controller.observe(
       stream({ type: "response.completed", response: { service_tier: "default" } }),
       fast.ctx,
     );
     fast.controller.observe(stream(data), fast.ctx);
-    await fast.controller.handle("status", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Last requested tier: default\nLast observed tier: unknown"),
-      "info",
-    );
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      requestPolicy: "default",
+      lastObserved: undefined,
+    });
     expect(fast.readAuthScope).not.toHaveBeenCalled();
     expect(fast.fetchCatalog).not.toHaveBeenCalled();
   });
@@ -756,7 +706,10 @@ describe("provider stream observations", () => {
   it("ignores wrong-model and nonterminal events, and does not show delivery from another session", async () => {
     const fast = createFastControllerFixture();
     await fast.controller.handle("off", fast.ctx);
-    fast.controller.transform({ model: model.id }, fast.ctx);
+    expect(fast.controller.transform({ model: model.id }, fast.ctx)).toEqual({
+      model: model.id,
+      service_tier: "default",
+    });
     fast.controller.observe(
       stream({ type: "response.completed", response: { service_tier: "default" } }),
       fast.ctx,
@@ -772,21 +725,19 @@ describe("provider stream observations", () => {
       stream({ type: "response.created", response: { service_tier: "priority" } }),
       fast.ctx,
     );
-    await fast.controller.handle("status", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Last observed tier: default"),
-      "info",
-    );
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      requestPolicy: "default",
+      lastObserved: "default",
+    });
     fast.ctx.sessionManager.getSessionId.mockReturnValue("session-b");
     fast.controller.observe(
       stream({ type: "response.completed", response: { service_tier: "priority" } }),
       fast.ctx,
     );
-    await fast.controller.handle("status", fast.ctx);
-    expect(fast.ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Last requested tier: unknown\nLast observed tier: unknown"),
-      "info",
-    );
+    expect(fast.controller.getStatus(fast.ctx)).toMatchObject({
+      requestPolicy: "default",
+      lastObserved: undefined,
+    });
   });
 });
 

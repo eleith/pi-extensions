@@ -8,14 +8,17 @@ import {
   type OAuthCredential,
 } from "@earendil-works/pi-ai";
 import {
+  BorderedLoader,
   createAgentSession,
   DefaultResourceLoader,
+  initTheme,
   ModelRuntime,
   SessionManager,
   SettingsManager,
   type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
 import codex from "./index.ts";
+import { customInteractionUI } from "./custom-interaction.test-helper.ts";
 
 const directory = await vi.hoisted(async () => {
   const { mkdtempSync } = await import("node:fs");
@@ -52,24 +55,38 @@ it("SDK usage reuses Pi's OAuth without a model turn or credential write", async
   vi.stubGlobal("fetch", accountRequest);
   const { runtime, model, accessToken, credentialWrites, modelTurns } =
     await createOfflineCodexRuntime();
-  const { session, sessionManager, notify, setStatus, extensionErrors, closeSession } =
-    await openCodexExtensionSession(runtime, model);
+  const {
+    session,
+    sessionManager,
+    notify,
+    setStatus,
+    custom,
+    modals,
+    extensionErrors,
+    closeSession,
+  } = await openCodexExtensionSession(runtime, model);
   try {
     const branch = structuredClone(sessionManager.getBranch());
     await session.prompt("/eleith:codex");
     expect(accountRequest).not.toHaveBeenCalled();
 
+    notify.mockImplementation(() => {
+      expect(modals[0].closed).toBe(true);
+      expect(modals[0].close).toHaveBeenCalledOnce();
+    });
     await session.prompt("/eleith:codex usage");
+    expect(custom).toHaveBeenCalledOnce();
+    expect(custom).toHaveBeenCalledWith(expect.any(Function), { overlay: true });
+    expect(modals[0].component).toBeInstanceOf(BorderedLoader);
+    expect(modals[0].lines.join("\n")).toContain("Fetching Codex usage…");
+    expect(modals[0].lines.join("\n")).toMatch(/esc.*cancel/i);
     expect(notify).toHaveBeenLastCalledWith(
       expect.stringContaining("5h window: 75% remaining (25% used)"),
       "info",
     );
     expect(accountRequest).toHaveBeenCalledOnce();
-    expect(setStatus.mock.calls).toEqual([
-      ["eleith-codex-usage", "Codex: fetching usage…"],
-      ["eleith-codex-usage", undefined],
-    ]);
-    expect(setStatus.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(modals[0].close.mock.invocationCallOrder[0]).toBeLessThan(
       notify.mock.invocationCallOrder.at(-1)!,
     );
     const headers = new Headers(accountRequest.mock.calls[0][1]?.headers);
@@ -125,6 +142,7 @@ async function createOfflineCodexRuntime() {
 }
 
 async function openCodexExtensionSession(runtime: ModelRuntime, model: Model<Api>) {
+  initTheme("dark", false);
   const settingsManager = SettingsManager.inMemory({
     packages: [],
     enableInstallTelemetry: false,
@@ -158,10 +176,12 @@ async function openCodexExtensionSession(runtime: ModelRuntime, model: Model<Api
   });
   const notify = vi.fn();
   const setStatus = vi.fn();
+  const surface = customInteractionUI();
+  const { custom, modals } = surface;
   const extensionErrors: unknown[] = [];
   await session.bindExtensions({
     mode: "tui",
-    uiContext: { notify, setStatus } as unknown as ExtensionUIContext,
+    uiContext: { notify, setStatus, custom } as unknown as ExtensionUIContext,
     onError: (error) => extensionErrors.push(error),
   });
   return {
@@ -169,10 +189,16 @@ async function openCodexExtensionSession(runtime: ModelRuntime, model: Model<Api
     sessionManager,
     notify,
     setStatus,
+    custom,
+    modals,
     extensionErrors,
     async closeSession() {
-      await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-      session.dispose();
+      try {
+        await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+      } finally {
+        surface.dispose();
+        session.dispose();
+      }
     },
   };
 }

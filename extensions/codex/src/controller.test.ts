@@ -4,6 +4,842 @@ import { describe, expect, it, vi } from "vitest";
 import { ContextController, type ContextAPI, type ContextHost } from "./controller.ts";
 import { CONTEXT_ENTRY, type ContextPreference } from "./state.ts";
 
+describe("ContextController", () => {
+  it.each(
+    [undefined, false, true].flatMap((saved) =>
+      [false, true].map((selectedExtended) => ({ saved, selectedExtended })),
+    ),
+  )(
+    "toggle flips saved preference $saved with selectedExtended=$selectedExtended",
+    async ({ saved, selectedExtended }) => {
+      const f = fixture();
+      f.state.branch = saved === undefined ? [] : [entry(preference(saved))];
+      f.state.current = selectedExtended ? { ...f.catalog, contextWindow: 922_000 } : f.catalog;
+      // Load the active branch without replay aligning metadata to its preference.
+      f.state.idle = false;
+      await f.controller.restore(f.ctx);
+      f.state.idle = true;
+
+      await f.controller.handle(" TOGGLE ", f.ctx);
+
+      const extended = saved !== true;
+      expect(f.state.current?.contextWindow).toBe(extended ? 922_000 : 272_000);
+      expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBe(extended);
+      expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(
+        CONTEXT_ENTRY,
+        preference(extended),
+      );
+      expect(f.api.setModel).toHaveBeenCalledTimes(extended === selectedExtended ? 0 : 1);
+      expect(f.confirm).toHaveBeenCalledTimes(!extended && selectedExtended ? 1 : 0);
+      expect(f.catalog.contextWindow).toBe(272_000);
+      expect(f.state.thinking).toBe("medium");
+    },
+  );
+
+  it("declined toggle reduction keeps the saved preference for the next toggle", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const extended = f.state.current;
+    f.confirm.mockResolvedValueOnce(false);
+
+    await f.controller.handle("toggle", f.ctx);
+
+    expect(f.state.current).toBe(extended);
+    expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBe(true);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+
+    await f.controller.handle("toggle", f.ctx);
+
+    expect(f.confirm).toHaveBeenCalledTimes(2);
+    expect(f.state.current?.contextWindow).toBe(272_000);
+    expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBe(false);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
+    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
+  });
+
+  it.each(["confirmation", "selection"] as const)(
+    "guards concurrent commands while a toggle awaits %s",
+    async (pending) => {
+      const f = fixture();
+      const finish = deferred<boolean>();
+      if (pending === "confirmation") {
+        await f.controller.handle("on", f.ctx);
+        f.confirm.mockReturnValueOnce(finish.promise);
+      } else {
+        f.api.setModel.mockImplementationOnce(async (copy) => {
+          await finish.promise;
+          await f.assign(copy);
+          return true;
+        });
+      }
+      const records = f.api.appendEntry.mock.calls.length;
+      const request = f.controller.handle("toggle", f.ctx);
+
+      for (const action of ["toggle", "on", "off"]) {
+        await f.controller.handle(action, f.ctx);
+        expect(f.notify).toHaveBeenLastCalledWith(
+          "Wait for the current run or context change to finish.",
+          "warning",
+        );
+      }
+      expect(f.api.setModel).toHaveBeenCalledTimes(1);
+      expect(f.confirm).toHaveBeenCalledTimes(pending === "confirmation" ? 1 : 0);
+      expect(f.api.appendEntry).toHaveBeenCalledTimes(records);
+      expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBe(
+        pending === "confirmation" ? true : undefined,
+      );
+
+      finish.resolve(true);
+      await request;
+
+      const extended = pending === "selection";
+      expect(f.state.current?.contextWindow).toBe(extended ? 922_000 : 272_000);
+      expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBe(extended);
+      expect(f.api.appendEntry).toHaveBeenCalledTimes(records + 1);
+      expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(extended));
+    },
+  );
+
+  it.each(["extend", "restore", " EXTEND ", "", "context on", "on off", "usage", "fast"])(
+    "rejects legacy or invalid controller action %j without changing context",
+    async (action) => {
+      const f = fixture();
+      await f.controller.handle(action, f.ctx);
+      expect(f.notify).toHaveBeenCalledExactlyOnceWith(
+        "Usage: /personal:codex context [on|off|toggle]",
+        "warning",
+      );
+      expect(f.state.current).toBe(f.catalog);
+      expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBeUndefined();
+      expect(f.api.setModel).not.toHaveBeenCalled();
+      expect(f.api.appendEntry).not.toHaveBeenCalled();
+      expect(f.confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    "extends with retained/cloned outcome %s, preserving metadata and thinking",
+    async (clone) => {
+      const f = fixture();
+      f.state.cloneSelection = clone;
+      const original = structuredClone(f.catalog);
+      await f.controller.handle(" ON ", f.ctx);
+
+      expect(f.state.current).not.toBe(f.catalog);
+      expect(f.state.current).toEqual({ ...original, contextWindow: 922_000 });
+      expect(f.catalog).toEqual(original);
+      expect(f.state.thinking).toBe("medium");
+      expect(f.api.setThinkingLevel).toHaveBeenCalledWith("medium");
+      expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(CONTEXT_ENTRY, preference(true));
+      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("922,000 tokens"), "info");
+
+      await f.controller.handle("on", f.ctx);
+      expect(f.api.setModel).toHaveBeenCalledTimes(1);
+      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([null, "original"])(
+    "allows setModel metadata to advance leaf %s",
+    async (previousLeaf) => {
+      const f = fixture();
+      f.state.leafId = previousLeaf;
+      f.state.branch = previousLeaf === null ? [] : [{ ...entry(null), id: previousLeaf }];
+      f.api.setModel.mockImplementationOnce(async (copy) => {
+        await f.assign(copy);
+        const timestamp = "2026-01-01T00:00:00Z";
+        f.state.branch.push(
+          {
+            type: "model_change",
+            id: "model-change",
+            parentId: previousLeaf,
+            timestamp,
+            provider: copy.provider,
+            modelId: copy.id,
+          },
+          {
+            type: "thinking_level_change",
+            id: "thinking-change",
+            parentId: "model-change",
+            timestamp,
+            thinkingLevel: "off",
+          },
+        );
+        f.state.leafId = "thinking-change";
+        return true;
+      });
+      await f.controller.handle("on", f.ctx);
+      expect(f.state.current?.contextWindow).toBe(922_000);
+      expect(f.catalog.contextWindow).toBe(272_000);
+      expect(f.state.thinking).toBe("medium");
+      expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(CONTEXT_ENTRY, preference(true));
+    },
+  );
+
+  it("confirms restore without mutating any previous copy", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const extended = f.state.current!;
+    f.state.thinking = "high";
+    await f.controller.handle("off", f.ctx);
+
+    expect(f.confirm).toHaveBeenCalledWith(
+      "Use standard context?",
+      expect.stringContaining("922,000 → 272,000"),
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(f.state.current).not.toBe(extended);
+    expect(f.state.current?.contextWindow).toBe(272_000);
+    expect(extended.contextWindow).toBe(922_000);
+    expect(f.catalog.contextWindow).toBe(272_000);
+    expect(f.state.thinking).toBe("high");
+    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
+    expect(f.api.setModel).toHaveBeenCalledTimes(2);
+
+    f.controller.shutdown();
+    expect(f.api.setModel).toHaveBeenCalledTimes(2);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
+  });
+
+  it("shutdown leaves selected metadata untouched with no API or transcript writes", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const owned = f.state.current!;
+    f.api.setModel.mockClear();
+    f.api.appendEntry.mockClear();
+    f.api.setThinkingLevel.mockClear();
+    f.expire();
+    f.controller.shutdown();
+    f.controller.shutdown();
+    await f.controller.restore(f.ctx);
+    await f.controller.modelSelected(f.ctx);
+    await f.controller.reconcile(f.ctx);
+    await f.controller.handle("on", f.ctx);
+
+    expect(owned.contextWindow).toBe(922_000);
+    expect(f.catalog.contextWindow).toBe(272_000);
+    expect(f.api.setModel).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
+    expect(f.state.staleReads).toBe(0);
+  });
+
+  it("authentication refusal leaves the model and branch preference untouched", async () => {
+    const f = fixture();
+    f.state.accepted = false;
+    await f.controller.handle("on", f.ctx);
+    expect(f.state.current).toBe(f.catalog);
+    expect(f.catalog.contextWindow).toBe(272_000);
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
+    expect(f.notify).toHaveBeenCalledWith(
+      "Could not change context: provider authentication is unavailable. Automatic replay is paused; explicitly use /personal:codex context on or /personal:codex context off after checking authentication.",
+      "warning",
+    );
+
+    f.state.accepted = true;
+    await f.controller.handle("on", f.ctx);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("authentication refusal during replay does not retry on later idle hooks", async () => {
+    const f = fixture();
+    f.state.branch = [entry(preference(true))];
+    f.state.accepted = false;
+    await f.controller.restore(f.ctx);
+    f.state.accepted = true;
+    await f.controller.reconcile(f.ctx);
+    await f.controller.modelSelected(f.ctx);
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    await f.controller.handle("on", f.ctx);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.thinking).toBe("medium");
+    expect(f.api.setModel).toHaveBeenCalledTimes(2);
+    // The saved desired preference was already true; no redundant record.
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+  });
+
+  it("busy runs reject changes without opening a dialog or writing preferences", async () => {
+    const f = fixture();
+    f.state.idle = false;
+    await f.controller.handle("on", f.ctx);
+    await f.controller.handle("off", f.ctx);
+    await f.controller.handle("toggle", f.ctx);
+    expect(f.api.setModel).not.toHaveBeenCalled();
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("Wait for the current run"),
+      "warning",
+    );
+  });
+
+  it("cancelled reduction leaves the extended copy and preference intact", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const owned = f.state.current;
+    f.confirm.mockResolvedValueOnce(false);
+    await f.controller.handle("off", f.ctx);
+    expect(f.state.current).toBe(owned);
+    expect(owned?.contextWindow).toBe(922_000);
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+
+    await f.controller.handle("off", f.ctx);
+    expect(f.state.current?.contextWindow).toBe(272_000);
+  });
+
+  it("usage above the target requires compaction before a reduction dialog", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    f.state.usage = { tokens: 272_001, contextWindow: 922_000, percent: null };
+    await f.controller.handle("off", f.ctx);
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("Run /compact"), "warning");
+  });
+
+  it("no UI blocks reduction, even when usage is unknown", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    f.state.hasUI = false;
+    f.state.usage = undefined;
+    await f.controller.handle("off", f.ctx);
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("interactive confirmation"),
+      "warning",
+    );
+  });
+
+  it("restores only valid preferences on the active branch for the selected model", async () => {
+    const f = fixture();
+    // This abandoned choice must not survive restore of the active branch.
+    f.state.branch = [entry(preference(true))];
+    f.state.idle = false;
+    await f.controller.restore(f.ctx);
+    f.state.branch = [
+      entry(preference(false)),
+      entry({ ...preference(true), extended: "true" }),
+      entry(preference(true), "another-extension"),
+      entry(preference(true, "gpt-6-astra")),
+    ];
+    f.state.idle = true;
+    await f.controller.restore(f.ctx);
+    expect(f.state.current).toBe(f.catalog);
+    expect(f.api.setModel).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+
+    f.state.branch.push(entry(preference(true)), entry(null));
+    await f.controller.restore(f.ctx);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.catalog.contextWindow).toBe(272_000);
+  });
+
+  it("defers standard-branch restoration until idle and confirms the reduction", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    f.state.branch = [entry(preference(false))];
+    f.state.idle = false;
+    await f.controller.restore(f.ctx);
+    await f.controller.reconcile(f.ctx);
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.state.current?.contextWindow).toBe(922_000);
+
+    const answer = deferred<boolean>();
+    f.confirm.mockReturnValueOnce(answer.promise);
+    f.state.idle = true;
+    const restoration = f.controller.reconcile(f.ctx);
+    await f.controller.handle("on", f.ctx);
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("Wait for the current run"),
+      "warning",
+    );
+    answer.resolve(true);
+    await restoration;
+    expect(f.state.current?.contextWindow).toBe(272_000);
+    // Reconciliation applies a saved choice, not a new transcript preference.
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("declining branch reconciliation remembers extended on that branch", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    f.state.branch = [];
+    f.confirm.mockResolvedValueOnce(false);
+    await f.controller.restore(f.ctx);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
+    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(true));
+    expect(f.notify).toHaveBeenLastCalledWith("Keeping extended context on this branch.", "info");
+    await f.controller.reconcile(f.ctx);
+    expect(f.confirm).toHaveBeenCalledTimes(1);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+  });
+
+  it("shutdown aborts the confirmation signal without accessing the expired root", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const answer = deferred<boolean>();
+    f.confirm.mockReturnValueOnce(answer.promise);
+    const request = f.controller.handle("off", f.ctx);
+    const signal = f.confirm.mock.calls[0][2]?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+    f.controller.shutdown();
+    f.expire();
+    f.notify.mockClear();
+    answer.resolve(true);
+    await request;
+    expect(signal?.aborted).toBe(true);
+    expect(f.state.staleReads).toBe(0);
+    expect(f.notify).not.toHaveBeenCalled();
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["model", "tree", "session", "shutdown"] as const)(
+    "%s invalidates a dialog without expired getters or fabricated decline preferences",
+    async (event) => {
+      const f = fixture();
+      await f.controller.handle("on", f.ctx);
+      const extended = f.state.current!;
+      f.state.branch = [];
+      const answer = deferred<boolean>();
+      f.confirm.mockReturnValueOnce(answer.promise);
+      const request = f.controller.restore(f.ctx);
+      const signal = f.confirm.mock.calls[0][2]?.signal;
+      const live = f.replaceRoot();
+      if (event === "model") {
+        f.state.current = model("other", "other");
+        await f.controller.modelSelected(live);
+      } else if (event === "shutdown") f.controller.shutdown(live);
+      else {
+        if (event === "session") f.state.sessionId = "session-b";
+        await f.controller.restore(live);
+      }
+      expect(signal?.aborted).toBe(true);
+      expect(f.notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("Automatic replay is paused"),
+        "warning",
+      );
+      f.notify.mockClear();
+      answer.resolve(false);
+      await request;
+      expect(f.state.staleReads).toBe(0);
+      expect(f.notify).not.toHaveBeenCalled();
+      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+      expect(extended.contextWindow).toBe(922_000);
+      await f.controller.reconcile(f.ctx);
+      expect(f.confirm).toHaveBeenCalledTimes(1);
+      if (event !== "shutdown") {
+        f.state.current = extended;
+        await f.controller.handle("off", f.ctx);
+        expect(f.state.current?.contextWindow).toBe(272_000);
+      }
+    },
+  );
+
+  it.each(["sessionId", "leafId", "model", "idle"] as const)(
+    "rejects even a declined confirmation after %s changes",
+    async (key) => {
+      const f = fixture();
+      await f.controller.handle("on", f.ctx);
+      f.state.branch = [];
+      const answer = deferred<boolean>();
+      f.confirm.mockReturnValueOnce(answer.promise);
+      const request = f.controller.restore(f.ctx);
+      if (key === "model") f.state.current = { ...f.state.current!, maxTokens: 100 };
+      else if (key === "idle") f.state.idle = false;
+      else f.state[key] = "changed";
+      answer.resolve(false);
+      await request;
+      expect(f.api.setModel).toHaveBeenCalledTimes(1);
+      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
+    },
+  );
+
+  it.each([undefined, { tokens: null, contextWindow: 922_000, percent: null }])(
+    "confirms reduction with unknown usage %j without inventing zero",
+    async (usage) => {
+      const f = fixture();
+      await f.controller.handle("on", f.ctx);
+      f.state.usage = usage;
+      await f.controller.handle("off", f.ctx);
+      expect(f.confirm).toHaveBeenCalledWith(
+        "Use standard context?",
+        expect.stringContaining("usage: unknown"),
+        expect.anything(),
+      );
+      expect(f.state.current?.contextWindow).toBe(272_000);
+    },
+  );
+
+  it("accepts a frozen submitted copy and leaves shared nested catalog metadata untouched", async () => {
+    const f = fixture();
+    const original = structuredClone(f.catalog);
+    Object.freeze(f.catalog.cost);
+    Object.freeze(f.catalog.input);
+    Object.freeze(f.catalog);
+    f.api.setModel.mockImplementation(async (copy) => {
+      Object.freeze(copy);
+      await f.assign(copy);
+      return true;
+    });
+    await f.controller.handle("on", f.ctx);
+    const extended = f.state.current!;
+    expect(extended.cost).toBe(f.catalog.cost);
+    await f.controller.handle("off", f.ctx);
+    expect(f.state.current?.contextWindow).toBe(272_000);
+    expect(extended.contextWindow).toBe(922_000);
+    expect(f.catalog).toEqual(original);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
+    f.controller.shutdown();
+    expect(extended.contextWindow).toBe(922_000);
+  });
+
+  it("compares captured values even when another writer mutates a retained submitted object", async () => {
+    const f = fixture();
+    f.api.setModel.mockImplementationOnce(async (copy) => {
+      await f.assign(copy);
+      // Simulate a different writer: retaining the input is not an ownership contract.
+      copy.contextWindow = 800_000;
+      return true;
+    });
+    await f.controller.handle("on", f.ctx);
+    expect(f.state.current?.contextWindow).toBe(800_000);
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
+    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
+  });
+
+  it("an expired dialog's finally cannot clear a newer explicit request", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const oldAnswer = deferred<boolean>();
+    const newAnswer = deferred<boolean>();
+    f.confirm.mockReturnValueOnce(oldAnswer.promise).mockReturnValueOnce(newAnswer.promise);
+    const oldRequest = f.controller.handle("off", f.ctx);
+    await f.controller.restore(f.replaceRoot());
+    const newRequest = f.controller.handle("off", f.ctx);
+    oldAnswer.resolve(false);
+    await oldRequest;
+    await f.controller.handle("on", f.ctx);
+    expect(f.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("Wait for the current run"),
+      "warning",
+    );
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    newAnswer.resolve(true);
+    await newRequest;
+    expect(f.state.staleReads).toBe(0);
+    expect(f.state.current?.contextWindow).toBe(272_000);
+    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
+  });
+
+  it("rechecks usage after confirmation", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    f.confirm.mockImplementationOnce(async () => {
+      f.state.usage = { tokens: 300_000, contextWindow: 922_000, percent: null };
+      return true;
+    });
+    await f.controller.handle("off", f.ctx);
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("Run /compact"), "warning");
+  });
+
+  it.each(["usage", "noUI"] as const)(
+    "blocked replay %s cannot remember keep-extended",
+    async (reason) => {
+      const f = fixture();
+      await f.controller.handle("on", f.ctx);
+      f.state.branch = [];
+      if (reason === "usage")
+        f.state.usage = { tokens: 300_000, contextWindow: 922_000, percent: null };
+      else f.state.hasUI = false;
+      await f.controller.restore(f.ctx);
+      expect(f.confirm).not.toHaveBeenCalled();
+      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["sessionId", "leafId", "metadata", "cloneMismatch"] as const)(
+    "reports a completed setModel with %s interference without rollback or replay",
+    async (key) => {
+      const f = fixture();
+      const assigned = deferred<void>();
+      const finish = deferred<boolean>();
+      f.api.setModel.mockImplementationOnce(async (copy) => {
+        await f.assign(copy);
+        assigned.resolve();
+        return finish.promise;
+      });
+      const request = f.controller.handle("on", f.ctx);
+      await assigned.promise;
+      if (key === "metadata" || key === "cloneMismatch")
+        f.state.current = {
+          ...f.state.current!,
+          [key === "metadata" ? "baseUrl" : "maxTokens"]:
+            key === "metadata" ? "https://other.invalid" : 100,
+        };
+      else f.state[key] = "changed";
+      finish.resolve(true);
+      await request;
+      expect(f.api.setModel.mock.calls[0][0].contextWindow).toBe(922_000);
+      expect(f.catalog.contextWindow).toBe(272_000);
+      expect(f.state.thinking).toBe("off");
+      expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
+      expect(f.api.appendEntry).not.toHaveBeenCalled();
+      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
+      f.state.current = f.catalog;
+      await f.controller.reconcile(f.ctx);
+      await f.controller.modelSelected(f.ctx);
+      await f.controller.restore(f.ctx);
+      expect(f.api.setModel).toHaveBeenCalledTimes(1);
+      await f.controller.handle("on", f.ctx);
+      expect(f.state.current?.contextWindow).toBe(922_000);
+      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["shutdown", "restore"] as const)(
+    "invalidates pending setModel on %s without reading stale getters",
+    async (event) => {
+      const f = fixture();
+      const started = deferred<Model<Api>>();
+      const finish = deferred<void>();
+      f.api.setModel.mockImplementationOnce(async (copy) => {
+        started.resolve(copy);
+        await finish.promise;
+        // An SDK selection can still assign after local cleanup.
+        f.state.current = copy;
+        f.state.thinking = "off";
+        return true;
+      });
+      const request = f.controller.handle("on", f.ctx);
+      const copy = await started.promise;
+      const original = structuredClone(copy);
+      const live = f.replaceRoot();
+      if (event === "shutdown") f.controller.shutdown(live);
+      else await f.controller.restore(live);
+      expect(f.notify).toHaveBeenLastCalledWith(
+        expect.stringContaining("cannot be cancelled"),
+        "warning",
+      );
+      f.notify.mockClear();
+      finish.resolve();
+      await request;
+      expect(copy).toEqual(original);
+      expect(f.state.staleReads).toBe(0);
+      expect(f.state.current?.contextWindow).toBe(922_000);
+      expect(f.api.appendEntry).not.toHaveBeenCalled();
+      expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
+      expect(f.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["on", "off"])("does not repair a throw-after-assignment on %s", async (action) => {
+    const f = fixture();
+    if (action === "off") await f.controller.handle("on", f.ctx);
+    const previous = f.state.current!;
+    const original = structuredClone(previous);
+    const records = f.api.appendEntry.mock.calls.length;
+    f.api.setThinkingLevel.mockClear();
+    f.api.setModel.mockImplementationOnce(async (copy) => {
+      await f.assign(copy);
+      throw new Error("model hook failed after assignment");
+    });
+    await f.controller.handle(action, f.ctx);
+    expect(f.state.current?.contextWindow).toBe(action === "on" ? 922_000 : 272_000);
+    expect(previous).toEqual(original);
+    expect(f.state.thinking).toBe("off");
+    expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(records);
+    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
+    await f.controller.reconcile(f.ctx);
+    f.controller.shutdown();
+    expect(previous).toEqual(original);
+  });
+
+  it("does not rewrite a pending copy or external selection during authentication", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const oldCopy = f.state.current!;
+    const started = deferred<Model<Api>>();
+    const finish = deferred<void>();
+    f.api.setModel.mockImplementationOnce(async (copy) => {
+      started.resolve(copy);
+      await finish.promise;
+      await f.assign(copy);
+      return true;
+    });
+    const request = f.controller.handle("off", f.ctx);
+    const pending = await started.promise;
+    const originalPending = structuredClone(pending);
+    const external = model("other", "another-provider");
+    const originalExternal = structuredClone(external);
+    await f.assign(external);
+    expect(pending).toEqual(originalPending);
+    finish.resolve();
+    await request;
+    expect(f.state.current).toEqual(originalPending);
+    expect(external).toEqual(originalExternal);
+    expect(oldCopy.contextWindow).toBe(922_000);
+    expect(f.state.thinking).toBe("off");
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+    expect(f.notify).toHaveBeenCalledWith(
+      expect.stringContaining("cannot be cancelled"),
+      "warning",
+    );
+    f.state.current = f.catalog;
+    await f.controller.reconcile(f.ctx);
+    expect(f.api.setModel).toHaveBeenCalledTimes(2);
+  });
+
+  it("replays the selected model's ordinary branch preference on a provider/ID event", async () => {
+    const f = fixture();
+    f.state.branch = [entry(preference(true, "gpt-6-astra"))];
+    await f.controller.restore(f.ctx);
+    const astra = model("gpt-6-astra");
+    f.state.catalog = astra;
+    await f.assign(astra);
+    expect(f.state.current?.id).toBe("gpt-6-astra");
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(astra.contextWindow).toBe(272_000);
+    expect(f.api.setModel).toHaveBeenCalledTimes(1);
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.state.thinking).toBe("off");
+  });
+
+  it("replays a saved choice after same-ID catalog selection via the next idle hook", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    const oldCopy = f.state.current!;
+    await f.assign(f.catalog); // no model_select
+    expect(f.state.current?.contextWindow).toBe(272_000);
+    await f.controller.reconcile(f.ctx);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(oldCopy.contextWindow).toBe(922_000);
+    expect(f.catalog.contextWindow).toBe(272_000);
+    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores an extended selection with a fresh controller using catalog baseline", async () => {
+    const f = fixture();
+    await f.controller.handle("on", f.ctx);
+    f.controller.shutdown();
+    const controller = new ContextController(f.api, "personal:codex");
+    await controller.restore(f.ctx);
+    expect(f.state.current?.contextWindow).toBe(922_000);
+    await controller.handle("off", f.ctx);
+    expect(f.api.setModel.mock.lastCall?.[0].contextWindow).toBe(272_000);
+    expect(f.state.current?.contextWindow).toBe(272_000);
+    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
+  });
+
+  it.each([300_000, 922_000, 1_000_000])(
+    "honors catalog override %s rather than a guessed default",
+    async (window) => {
+      const f = fixture({ ...model(), contextWindow: window });
+      await f.controller.handle("on", f.ctx);
+      expect(f.state.current?.contextWindow).toBe(Math.max(window, 922_000));
+      if (window >= 922_000) {
+        expect(f.api.setModel).not.toHaveBeenCalled();
+        expect(f.notify).toHaveBeenLastCalledWith(
+          `Using catalog context: ${window.toLocaleString("en-US")} tokens. No extension is needed.`,
+          "info",
+        );
+      }
+      await f.controller.handle("off", f.ctx);
+      expect(f.state.current?.contextWindow).toBe(window);
+      if (window >= 922_000) {
+        expect(f.confirm).not.toHaveBeenCalled();
+        expect(f.notify).toHaveBeenLastCalledWith(
+          expect.stringContaining("no smaller default is known"),
+          "info",
+        );
+      }
+    },
+  );
+
+  it.each(["gpt-6.2-sol", "gpt-6.1-astra", "gpt-7-sol"])(
+    "does not guess an extended limit or replay saved preferences for %s",
+    async (id) => {
+      const f = fixture(model(id));
+      const original = structuredClone(f.catalog);
+      f.state.branch = [entry(preference(true, id))];
+      await f.controller.restore(f.ctx);
+      await f.controller.handle("on", f.ctx);
+      await f.controller.handle("off", f.ctx);
+      expect(f.notify).toHaveBeenLastCalledWith(
+        `No verified extended context limit for openai-codex/${id}. Only supported Codex models can be changed.`,
+        "warning",
+      );
+      const notifications = f.notify.mock.calls.length;
+      expect(f.controller.getStatus(f.ctx)?.extendedWindow).toBeUndefined();
+      expect(f.notify).toHaveBeenCalledTimes(notifications);
+      expect(f.state.current).toBe(f.catalog);
+      expect(f.catalog).toEqual(original);
+      expect(f.api.setModel).not.toHaveBeenCalled();
+      expect(f.api.appendEntry).not.toHaveBeenCalled();
+      expect(f.confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not extend a known ID through a non-Codex API", async () => {
+    const f = fixture({ ...model(), api: "openai-responses" });
+    await f.controller.handle("on", f.ctx);
+    expect(f.api.setModel).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("No verified extended context limit"),
+      "warning",
+    );
+  });
+
+  it.each([
+    undefined,
+    { ...model(), id: "other" },
+    { ...model(), provider: "other" },
+    { ...model(), api: "openai-responses" },
+    { ...model(), baseUrl: "https://other.invalid" },
+    ...[0, -1, NaN, Infinity].map((contextWindow) => ({ ...model(), contextWindow })),
+  ])("refuses missing/incompatible/invalid catalog baseline %j", async (catalog) => {
+    const f = fixture();
+    f.state.current = { ...f.catalog, contextWindow: 922_000 };
+    f.state.catalog = catalog;
+    await f.controller.handle("off", f.ctx);
+    await f.controller.handle("on", f.ctx);
+    await f.controller.reconcile(f.ctx);
+    expect(f.api.setModel).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("baseline is unknown"),
+      "warning",
+    );
+    const notifications = f.notify.mock.calls.length;
+    expect(f.controller.getStatus(f.ctx)).toMatchObject({
+      standardWindow: undefined,
+      extendedWindow: undefined,
+    });
+    expect(f.notify).toHaveBeenCalledTimes(notifications);
+  });
+});
+
 function model(id = "gpt-6-sol", provider = "openai-codex"): Model<Api> {
   return {
     id,
@@ -167,728 +1003,3 @@ function fixture(catalog = model()) {
     },
   };
 }
-
-describe("ContextController", () => {
-  it.each([false, true])(
-    "extends with retained/cloned outcome %s, preserving metadata and thinking",
-    async (clone) => {
-      const f = fixture();
-      f.state.cloneSelection = clone;
-      const original = structuredClone(f.catalog);
-      await f.controller.handle(" EXTEND ", f.ctx);
-
-      expect(f.state.current).not.toBe(f.catalog);
-      expect(f.state.current).toEqual({ ...original, contextWindow: 922_000 });
-      expect(f.catalog).toEqual(original);
-      expect(f.state.thinking).toBe("medium");
-      expect(f.api.setThinkingLevel).toHaveBeenCalledWith("medium");
-      expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(CONTEXT_ENTRY, preference(true));
-      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("922,000 tokens"), "info");
-
-      await f.controller.handle("extend", f.ctx);
-      expect(f.api.setModel).toHaveBeenCalledTimes(1);
-      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each([null, "original"])(
-    "allows setModel metadata to advance leaf %s",
-    async (previousLeaf) => {
-      const f = fixture();
-      f.state.leafId = previousLeaf;
-      f.state.branch = previousLeaf === null ? [] : [{ ...entry(null), id: previousLeaf }];
-      f.api.setModel.mockImplementationOnce(async (copy) => {
-        await f.assign(copy);
-        const timestamp = "2026-01-01T00:00:00Z";
-        f.state.branch.push(
-          {
-            type: "model_change",
-            id: "model-change",
-            parentId: previousLeaf,
-            timestamp,
-            provider: copy.provider,
-            modelId: copy.id,
-          },
-          {
-            type: "thinking_level_change",
-            id: "thinking-change",
-            parentId: "model-change",
-            timestamp,
-            thinkingLevel: "off",
-          },
-        );
-        f.state.leafId = "thinking-change";
-        return true;
-      });
-      await f.controller.handle("extend", f.ctx);
-      expect(f.state.current?.contextWindow).toBe(922_000);
-      expect(f.catalog.contextWindow).toBe(272_000);
-      expect(f.state.thinking).toBe("medium");
-      expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(CONTEXT_ENTRY, preference(true));
-    },
-  );
-
-  it("confirms restore without mutating any previous copy", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    const extended = f.state.current!;
-    f.state.thinking = "high";
-    await f.controller.handle("restore", f.ctx);
-
-    expect(f.confirm).toHaveBeenCalledWith(
-      "Use standard context?",
-      expect.stringContaining("922,000 → 272,000"),
-      { signal: expect.any(AbortSignal) },
-    );
-    expect(f.state.current).not.toBe(extended);
-    expect(f.state.current?.contextWindow).toBe(272_000);
-    expect(extended.contextWindow).toBe(922_000);
-    expect(f.catalog.contextWindow).toBe(272_000);
-    expect(f.state.thinking).toBe("high");
-    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
-    expect(f.api.setModel).toHaveBeenCalledTimes(2);
-
-    f.controller.shutdown();
-    expect(f.api.setModel).toHaveBeenCalledTimes(2);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
-  });
-
-  it("shutdown leaves selected metadata untouched with no API or transcript writes", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    const owned = f.state.current!;
-    f.api.setModel.mockClear();
-    f.api.appendEntry.mockClear();
-    f.api.setThinkingLevel.mockClear();
-    f.expire();
-    f.controller.shutdown();
-    f.controller.shutdown();
-    await f.controller.restore(f.ctx);
-    await f.controller.modelSelected(f.ctx);
-    await f.controller.reconcile(f.ctx);
-    await f.controller.handle("extend", f.ctx);
-
-    expect(owned.contextWindow).toBe(922_000);
-    expect(f.catalog.contextWindow).toBe(272_000);
-    expect(f.api.setModel).not.toHaveBeenCalled();
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
-    expect(f.state.staleReads).toBe(0);
-  });
-
-  it("authentication refusal leaves the model and branch preference untouched", async () => {
-    const f = fixture();
-    f.state.accepted = false;
-    await f.controller.handle("extend", f.ctx);
-    expect(f.state.current).toBe(f.catalog);
-    expect(f.catalog.contextWindow).toBe(272_000);
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
-    expect(f.notify).toHaveBeenCalledWith(
-      expect.stringContaining("authentication is unavailable"),
-      "warning",
-    );
-
-    f.state.accepted = true;
-    await f.controller.handle("extend", f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-  });
-
-  it("authentication refusal during replay does not retry on later idle hooks", async () => {
-    const f = fixture();
-    f.state.branch = [entry(preference(true))];
-    f.state.accepted = false;
-    await f.controller.restore(f.ctx);
-    f.state.accepted = true;
-    await f.controller.reconcile(f.ctx);
-    await f.controller.modelSelected(f.ctx);
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    await f.controller.handle("extend", f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(f.state.thinking).toBe("medium");
-    expect(f.api.setModel).toHaveBeenCalledTimes(2);
-    // The saved desired preference was already true; no redundant record.
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-  });
-
-  it("busy runs reject changes without opening a dialog or writing preferences", async () => {
-    const f = fixture();
-    f.state.idle = false;
-    await f.controller.handle("extend", f.ctx);
-    await f.controller.handle("restore", f.ctx);
-    expect(f.api.setModel).not.toHaveBeenCalled();
-    expect(f.confirm).not.toHaveBeenCalled();
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Wait for the current run"),
-      "warning",
-    );
-  });
-
-  it("cancelled reduction leaves the extended copy and preference intact", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    const owned = f.state.current;
-    f.confirm.mockResolvedValueOnce(false);
-    await f.controller.handle("restore", f.ctx);
-    expect(f.state.current).toBe(owned);
-    expect(owned?.contextWindow).toBe(922_000);
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-
-    await f.controller.handle("restore", f.ctx);
-    expect(f.state.current?.contextWindow).toBe(272_000);
-  });
-
-  it("usage above the target requires compaction before a reduction dialog", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    f.state.usage = { tokens: 272_001, contextWindow: 922_000, percent: null };
-    await f.controller.handle("restore", f.ctx);
-    expect(f.confirm).not.toHaveBeenCalled();
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("Run /compact"), "warning");
-  });
-
-  it("no UI blocks reduction, even when usage is unknown", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    f.state.hasUI = false;
-    f.state.usage = undefined;
-    await f.controller.handle("restore", f.ctx);
-    expect(f.confirm).not.toHaveBeenCalled();
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(f.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("interactive confirmation"),
-      "warning",
-    );
-  });
-
-  it("restores only valid preferences on the active branch for the selected model", async () => {
-    const f = fixture();
-    // This abandoned choice must not survive restore of the active branch.
-    f.state.branch = [entry(preference(true))];
-    f.state.idle = false;
-    await f.controller.restore(f.ctx);
-    f.state.branch = [
-      entry(preference(false)),
-      entry({ ...preference(true), extended: "true" }),
-      entry(preference(true), "another-extension"),
-      entry(preference(true, "gpt-6-astra")),
-    ];
-    f.state.idle = true;
-    await f.controller.restore(f.ctx);
-    expect(f.state.current).toBe(f.catalog);
-    expect(f.api.setModel).not.toHaveBeenCalled();
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-
-    f.state.branch.push(entry(preference(true)), entry(null));
-    await f.controller.restore(f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.catalog.contextWindow).toBe(272_000);
-  });
-
-  it("defers standard-branch restoration until idle and confirms the reduction", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    f.state.branch = [entry(preference(false))];
-    f.state.idle = false;
-    await f.controller.restore(f.ctx);
-    await f.controller.reconcile(f.ctx);
-    expect(f.confirm).not.toHaveBeenCalled();
-    expect(f.state.current?.contextWindow).toBe(922_000);
-
-    const answer = deferred<boolean>();
-    f.confirm.mockReturnValueOnce(answer.promise);
-    f.state.idle = true;
-    const restoration = f.controller.reconcile(f.ctx);
-    await f.controller.handle("extend", f.ctx);
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Wait for the current run"),
-      "warning",
-    );
-    answer.resolve(true);
-    await restoration;
-    expect(f.state.current?.contextWindow).toBe(272_000);
-    // Reconciliation applies a saved choice, not a new transcript preference.
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-  });
-
-  it("declining branch reconciliation remembers extended on that branch", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    f.state.branch = [];
-    f.confirm.mockResolvedValueOnce(false);
-    await f.controller.restore(f.ctx);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
-    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(true));
-    expect(f.notify).toHaveBeenLastCalledWith("Keeping extended context on this branch.", "info");
-    await f.controller.reconcile(f.ctx);
-    expect(f.confirm).toHaveBeenCalledTimes(1);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-  });
-
-  it("shutdown aborts the confirmation signal without accessing the expired root", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    const answer = deferred<boolean>();
-    f.confirm.mockReturnValueOnce(answer.promise);
-    const request = f.controller.handle("restore", f.ctx);
-    const signal = f.confirm.mock.calls[0][2]?.signal;
-    expect(signal).toBeInstanceOf(AbortSignal);
-    expect(signal?.aborted).toBe(false);
-    f.controller.shutdown();
-    f.expire();
-    f.notify.mockClear();
-    answer.resolve(true);
-    await request;
-    expect(signal?.aborted).toBe(true);
-    expect(f.state.staleReads).toBe(0);
-    expect(f.notify).not.toHaveBeenCalled();
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(["model", "tree", "session", "shutdown"] as const)(
-    "%s invalidates a dialog without expired getters or fabricated decline preferences",
-    async (event) => {
-      const f = fixture();
-      await f.controller.handle("extend", f.ctx);
-      const extended = f.state.current!;
-      f.state.branch = [];
-      const answer = deferred<boolean>();
-      f.confirm.mockReturnValueOnce(answer.promise);
-      const request = f.controller.restore(f.ctx);
-      const signal = f.confirm.mock.calls[0][2]?.signal;
-      const live = f.replaceRoot();
-      if (event === "model") {
-        f.state.current = model("other", "other");
-        await f.controller.modelSelected(live);
-      } else if (event === "shutdown") f.controller.shutdown(live);
-      else {
-        if (event === "session") f.state.sessionId = "session-b";
-        await f.controller.restore(live);
-      }
-      expect(signal?.aborted).toBe(true);
-      expect(f.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining("Automatic replay is paused"),
-        "warning",
-      );
-      f.notify.mockClear();
-      answer.resolve(false);
-      await request;
-      expect(f.state.staleReads).toBe(0);
-      expect(f.notify).not.toHaveBeenCalled();
-      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-      expect(extended.contextWindow).toBe(922_000);
-      await f.controller.reconcile(f.ctx);
-      expect(f.confirm).toHaveBeenCalledTimes(1);
-      if (event !== "shutdown") {
-        f.state.current = extended;
-        await f.controller.handle("restore", f.ctx);
-        expect(f.state.current?.contextWindow).toBe(272_000);
-      }
-    },
-  );
-
-  it.each(["sessionId", "leafId", "model", "idle"] as const)(
-    "rejects even a declined confirmation after %s changes",
-    async (key) => {
-      const f = fixture();
-      await f.controller.handle("extend", f.ctx);
-      f.state.branch = [];
-      const answer = deferred<boolean>();
-      f.confirm.mockReturnValueOnce(answer.promise);
-      const request = f.controller.restore(f.ctx);
-      if (key === "model") f.state.current = { ...f.state.current!, maxTokens: 100 };
-      else if (key === "idle") f.state.idle = false;
-      else f.state[key] = "changed";
-      answer.resolve(false);
-      await request;
-      expect(f.api.setModel).toHaveBeenCalledTimes(1);
-      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
-    },
-  );
-
-  it.each([undefined, { tokens: null, contextWindow: 922_000, percent: null }])(
-    "confirms reduction with unknown usage %j without inventing zero",
-    async (usage) => {
-      const f = fixture();
-      await f.controller.handle("extend", f.ctx);
-      f.state.usage = usage;
-      await f.controller.handle("restore", f.ctx);
-      expect(f.confirm).toHaveBeenCalledWith(
-        "Use standard context?",
-        expect.stringContaining("usage: unknown"),
-        expect.anything(),
-      );
-      expect(f.state.current?.contextWindow).toBe(272_000);
-    },
-  );
-
-  it("accepts a frozen submitted copy and leaves shared nested catalog metadata untouched", async () => {
-    const f = fixture();
-    const original = structuredClone(f.catalog);
-    Object.freeze(f.catalog.cost);
-    Object.freeze(f.catalog.input);
-    Object.freeze(f.catalog);
-    f.api.setModel.mockImplementation(async (copy) => {
-      Object.freeze(copy);
-      await f.assign(copy);
-      return true;
-    });
-    await f.controller.handle("extend", f.ctx);
-    const extended = f.state.current!;
-    expect(extended.cost).toBe(f.catalog.cost);
-    await f.controller.handle("restore", f.ctx);
-    expect(f.state.current?.contextWindow).toBe(272_000);
-    expect(extended.contextWindow).toBe(922_000);
-    expect(f.catalog).toEqual(original);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
-    f.controller.shutdown();
-    expect(extended.contextWindow).toBe(922_000);
-  });
-
-  it("compares captured values even when another writer mutates a retained submitted object", async () => {
-    const f = fixture();
-    f.api.setModel.mockImplementationOnce(async (copy) => {
-      await f.assign(copy);
-      // Simulate a different writer: retaining the input is not an ownership contract.
-      copy.contextWindow = 800_000;
-      return true;
-    });
-    await f.controller.handle("extend", f.ctx);
-    expect(f.state.current?.contextWindow).toBe(800_000);
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
-    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
-  });
-
-  it("an expired dialog's finally cannot clear a newer explicit request", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    const oldAnswer = deferred<boolean>();
-    const newAnswer = deferred<boolean>();
-    f.confirm.mockReturnValueOnce(oldAnswer.promise).mockReturnValueOnce(newAnswer.promise);
-    const oldRequest = f.controller.handle("restore", f.ctx);
-    await f.controller.restore(f.replaceRoot());
-    const newRequest = f.controller.handle("restore", f.ctx);
-    oldAnswer.resolve(false);
-    await oldRequest;
-    await f.controller.handle("extend", f.ctx);
-    expect(f.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Wait for the current run"),
-      "warning",
-    );
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    newAnswer.resolve(true);
-    await newRequest;
-    expect(f.state.staleReads).toBe(0);
-    expect(f.state.current?.contextWindow).toBe(272_000);
-    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
-  });
-
-  it("rechecks usage after confirmation", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    f.confirm.mockImplementationOnce(async () => {
-      f.state.usage = { tokens: 300_000, contextWindow: 922_000, percent: null };
-      return true;
-    });
-    await f.controller.handle("restore", f.ctx);
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("Run /compact"), "warning");
-  });
-
-  it.each(["usage", "noUI"] as const)(
-    "blocked replay %s cannot remember keep-extended",
-    async (reason) => {
-      const f = fixture();
-      await f.controller.handle("extend", f.ctx);
-      f.state.branch = [];
-      if (reason === "usage")
-        f.state.usage = { tokens: 300_000, contextWindow: 922_000, percent: null };
-      else f.state.hasUI = false;
-      await f.controller.restore(f.ctx);
-      expect(f.confirm).not.toHaveBeenCalled();
-      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(["sessionId", "leafId", "metadata", "cloneMismatch"] as const)(
-    "reports a completed setModel with %s interference without rollback or replay",
-    async (key) => {
-      const f = fixture();
-      const assigned = deferred<void>();
-      const finish = deferred<boolean>();
-      f.api.setModel.mockImplementationOnce(async (copy) => {
-        await f.assign(copy);
-        assigned.resolve();
-        return finish.promise;
-      });
-      const request = f.controller.handle("extend", f.ctx);
-      await assigned.promise;
-      if (key === "metadata" || key === "cloneMismatch")
-        f.state.current = {
-          ...f.state.current!,
-          [key === "metadata" ? "baseUrl" : "maxTokens"]:
-            key === "metadata" ? "https://other.invalid" : 100,
-        };
-      else f.state[key] = "changed";
-      finish.resolve(true);
-      await request;
-      expect(f.api.setModel.mock.calls[0][0].contextWindow).toBe(922_000);
-      expect(f.catalog.contextWindow).toBe(272_000);
-      expect(f.state.thinking).toBe("off");
-      expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
-      expect(f.api.appendEntry).not.toHaveBeenCalled();
-      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
-      f.state.current = f.catalog;
-      await f.controller.reconcile(f.ctx);
-      await f.controller.modelSelected(f.ctx);
-      await f.controller.restore(f.ctx);
-      expect(f.api.setModel).toHaveBeenCalledTimes(1);
-      await f.controller.handle("extend", f.ctx);
-      expect(f.state.current?.contextWindow).toBe(922_000);
-      expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(["shutdown", "restore"] as const)(
-    "invalidates pending setModel on %s without reading stale getters",
-    async (event) => {
-      const f = fixture();
-      const started = deferred<Model<Api>>();
-      const finish = deferred<void>();
-      f.api.setModel.mockImplementationOnce(async (copy) => {
-        started.resolve(copy);
-        await finish.promise;
-        // An SDK selection can still assign after local cleanup.
-        f.state.current = copy;
-        f.state.thinking = "off";
-        return true;
-      });
-      const request = f.controller.handle("extend", f.ctx);
-      const copy = await started.promise;
-      const original = structuredClone(copy);
-      const live = f.replaceRoot();
-      if (event === "shutdown") f.controller.shutdown(live);
-      else await f.controller.restore(live);
-      expect(f.notify).toHaveBeenLastCalledWith(
-        expect.stringContaining("cannot be cancelled"),
-        "warning",
-      );
-      f.notify.mockClear();
-      finish.resolve();
-      await request;
-      expect(copy).toEqual(original);
-      expect(f.state.staleReads).toBe(0);
-      expect(f.state.current?.contextWindow).toBe(922_000);
-      expect(f.api.appendEntry).not.toHaveBeenCalled();
-      expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
-      expect(f.notify).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(["extend", "restore"])(
-    "does not repair a throw-after-assignment on %s",
-    async (action) => {
-      const f = fixture();
-      if (action === "restore") await f.controller.handle("extend", f.ctx);
-      const previous = f.state.current!;
-      const original = structuredClone(previous);
-      const records = f.api.appendEntry.mock.calls.length;
-      f.api.setThinkingLevel.mockClear();
-      f.api.setModel.mockImplementationOnce(async (copy) => {
-        await f.assign(copy);
-        throw new Error("model hook failed after assignment");
-      });
-      await f.controller.handle(action, f.ctx);
-      expect(f.state.current?.contextWindow).toBe(action === "extend" ? 922_000 : 272_000);
-      expect(previous).toEqual(original);
-      expect(f.state.thinking).toBe("off");
-      expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
-      expect(f.api.appendEntry).toHaveBeenCalledTimes(records);
-      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("uncertain"), "warning");
-      await f.controller.reconcile(f.ctx);
-      f.controller.shutdown();
-      expect(previous).toEqual(original);
-    },
-  );
-
-  it("does not rewrite a pending copy or external selection during authentication", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    const oldCopy = f.state.current!;
-    const started = deferred<Model<Api>>();
-    const finish = deferred<void>();
-    f.api.setModel.mockImplementationOnce(async (copy) => {
-      started.resolve(copy);
-      await finish.promise;
-      await f.assign(copy);
-      return true;
-    });
-    const request = f.controller.handle("restore", f.ctx);
-    const pending = await started.promise;
-    const originalPending = structuredClone(pending);
-    const external = model("other", "another-provider");
-    const originalExternal = structuredClone(external);
-    await f.assign(external);
-    expect(pending).toEqual(originalPending);
-    finish.resolve();
-    await request;
-    expect(f.state.current).toEqual(originalPending);
-    expect(external).toEqual(originalExternal);
-    expect(oldCopy.contextWindow).toBe(922_000);
-    expect(f.state.thinking).toBe("off");
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    expect(f.notify).toHaveBeenCalledWith(
-      expect.stringContaining("cannot be cancelled"),
-      "warning",
-    );
-    f.state.current = f.catalog;
-    await f.controller.reconcile(f.ctx);
-    expect(f.api.setModel).toHaveBeenCalledTimes(2);
-  });
-
-  it("replays the selected model's ordinary branch preference on a provider/ID event", async () => {
-    const f = fixture();
-    f.state.branch = [entry(preference(true, "gpt-6-astra"))];
-    await f.controller.restore(f.ctx);
-    const astra = model("gpt-6-astra");
-    f.state.catalog = astra;
-    await f.assign(astra);
-    expect(f.state.current?.id).toBe("gpt-6-astra");
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(astra.contextWindow).toBe(272_000);
-    expect(f.api.setModel).toHaveBeenCalledTimes(1);
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.state.thinking).toBe("off");
-  });
-
-  it("replays a saved choice after same-ID catalog selection via the next idle hook", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    const oldCopy = f.state.current!;
-    await f.assign(f.catalog); // no model_select
-    expect(f.state.current?.contextWindow).toBe(272_000);
-    await f.controller.reconcile(f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(oldCopy.contextWindow).toBe(922_000);
-    expect(f.catalog.contextWindow).toBe(272_000);
-    expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-  });
-
-  it("restores an extended selection with a fresh controller using catalog baseline", async () => {
-    const f = fixture();
-    await f.controller.handle("extend", f.ctx);
-    f.controller.shutdown();
-    const controller = new ContextController(f.api, "personal:codex");
-    await controller.restore(f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    await controller.handle("restore", f.ctx);
-    expect(f.api.setModel.mock.lastCall?.[0].contextWindow).toBe(272_000);
-    expect(f.state.current?.contextWindow).toBe(272_000);
-    expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
-  });
-
-  it.each([300_000, 922_000, 1_000_000])(
-    "honors catalog override %s rather than a guessed default",
-    async (window) => {
-      const f = fixture({ ...model(), contextWindow: window });
-      await f.controller.handle("extend", f.ctx);
-      expect(f.state.current?.contextWindow).toBe(Math.max(window, 922_000));
-      if (window >= 922_000) {
-        expect(f.api.setModel).not.toHaveBeenCalled();
-        expect(f.notify).toHaveBeenLastCalledWith(
-          `Using catalog context: ${window.toLocaleString("en-US")} tokens. No extension is needed.`,
-          "info",
-        );
-      }
-      await f.controller.handle("restore", f.ctx);
-      expect(f.state.current?.contextWindow).toBe(window);
-      if (window >= 922_000) {
-        expect(f.confirm).not.toHaveBeenCalled();
-        expect(f.notify).toHaveBeenLastCalledWith(
-          expect.stringContaining("no smaller default is known"),
-          "info",
-        );
-      }
-    },
-  );
-
-  it.each(["gpt-6.2-sol", "gpt-6.1-astra", "gpt-7-sol"])(
-    "does not guess an extended limit or replay saved preferences for %s",
-    async (id) => {
-      const f = fixture(model(id));
-      const original = structuredClone(f.catalog);
-      f.state.branch = [entry(preference(true, id))];
-      await f.controller.restore(f.ctx);
-      await f.controller.handle("extend", f.ctx);
-      await f.controller.handle("restore", f.ctx);
-      expect(f.notify).toHaveBeenLastCalledWith(
-        `No verified extended context limit for openai-codex/${id}. Only supported Codex models can be changed.`,
-        "warning",
-      );
-      const notifications = f.notify.mock.calls.length;
-      expect(f.controller.getStatus(f.ctx)?.extendedWindow).toBeUndefined();
-      expect(f.notify).toHaveBeenCalledTimes(notifications);
-      expect(f.state.current).toBe(f.catalog);
-      expect(f.catalog).toEqual(original);
-      expect(f.api.setModel).not.toHaveBeenCalled();
-      expect(f.api.appendEntry).not.toHaveBeenCalled();
-      expect(f.confirm).not.toHaveBeenCalled();
-    },
-  );
-
-  it("does not extend a known ID through a non-Codex API", async () => {
-    const f = fixture({ ...model(), api: "openai-responses" });
-    await f.controller.handle("extend", f.ctx);
-    expect(f.api.setModel).not.toHaveBeenCalled();
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("No verified extended context limit"),
-      "warning",
-    );
-  });
-
-  it.each([
-    undefined,
-    { ...model(), id: "other" },
-    { ...model(), provider: "other" },
-    { ...model(), api: "openai-responses" },
-    { ...model(), baseUrl: "https://other.invalid" },
-    ...[0, -1, NaN, Infinity].map((contextWindow) => ({ ...model(), contextWindow })),
-  ])("refuses missing/incompatible/invalid catalog baseline %j", async (catalog) => {
-    const f = fixture();
-    f.state.current = { ...f.catalog, contextWindow: 922_000 };
-    f.state.catalog = catalog;
-    await f.controller.handle("restore", f.ctx);
-    await f.controller.handle("extend", f.ctx);
-    await f.controller.reconcile(f.ctx);
-    expect(f.api.setModel).not.toHaveBeenCalled();
-    expect(f.api.appendEntry).not.toHaveBeenCalled();
-    expect(f.confirm).not.toHaveBeenCalled();
-    expect(f.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("baseline is unknown"),
-      "warning",
-    );
-    const notifications = f.notify.mock.calls.length;
-    expect(f.controller.getStatus(f.ctx)).toMatchObject({
-      standardWindow: undefined,
-      extendedWindow: undefined,
-    });
-    expect(f.notify).toHaveBeenCalledTimes(notifications);
-  });
-});

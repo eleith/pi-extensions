@@ -20,19 +20,20 @@ export default async function codex(pi: ExtensionAPI): Promise<void> {
     description: "Context, fast requests and account allowance",
     actions: CODEX_ACTIONS,
     getArgumentCompletions: completeCodexArguments,
-    argumentActions: ["fast"],
+    argumentActions: ["context", "fast"],
     defaultAction: "",
     handler(action, ctx, argument) {
       if (disposed) return;
-      if (!action) {
+      const showStatus = !action || ((action === "context" || action === "fast") && !argument);
+      if (showStatus) {
         const context = controller.getStatus(ctx);
         const fastStatus = fast.getStatus(ctx);
         ctx.ui.notify(formatCodexDashboard(context, fastStatus, commandName), "info");
         return;
       }
       if (action === "usage") return usage.report(ctx);
+      if (action === "context") return controller.handle(argument ?? "", ctx);
       if (action === "fast") return fast.handle(argument ?? "", ctx);
-      return controller.handle(action, ctx);
     },
   });
 
@@ -41,12 +42,12 @@ export default async function codex(pi: ExtensionAPI): Promise<void> {
     return controller.restore(ctx);
   });
   pi.on("session_tree", (_event, ctx) => {
-    usage.cancel(ctx);
+    usage.cancel();
     fast.restore(ctx);
     return controller.restore(ctx);
   });
   pi.on("model_select", (_event, ctx) => {
-    usage.cancel(ctx);
+    usage.cancel();
     fast.invalidate();
     return controller.modelSelected(ctx);
   });
@@ -54,7 +55,7 @@ export default async function codex(pi: ExtensionAPI): Promise<void> {
     disposed = true;
     fast.dispose();
     try {
-      usage.dispose(ctx);
+      usage.dispose();
     } finally {
       controller.shutdown(ctx);
     }
