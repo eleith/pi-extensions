@@ -12,6 +12,8 @@ based on [pi-smart-fetch](https://github.com/Thinkscape/agent-smart-fetch/tree/b
 
 requires Pi 1.1.0 or newer and Node 22.19 or newer.
 
+use Node-based Pi; standalone Pi 1.5.0 has a [dependency-resolution bug](https://github.com/earendil-works/pi/issues/9817).
+
 ```sh
 pi install npm:@eleith-pi/web-fetch
 ```
