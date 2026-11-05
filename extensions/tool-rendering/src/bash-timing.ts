@@ -31,7 +31,7 @@ export class BashTiming {
     const state = context.state as TimingState;
     const running = context.executionStarted && Boolean(options.isPartial) && !context.isError;
     let timing = state[timingKey];
-    if (!this.disposed && context.executionStarted && (!timing || timing.owner !== this)) {
+    if (!this.disposed && running && (!timing || timing.owner !== this)) {
       timing = { owner: this, generation: this.generation, startedAt: Date.now() };
       state[timingKey] = timing;
     }

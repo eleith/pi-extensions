@@ -290,21 +290,76 @@ describe("bash renderers", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each([
-    [61000, "1m1s"],
-    [3600000, "1h"],
-    [3660000, "1h1m"],
-  ])("retains original long-duration formatting: %s", (ms, expected) => {
+  it("prefers recorded final duration over the live clock and remains stable on redraw", () => {
     const { state, render } = fixture();
     const ctx = context({ executionStarted: true, isPartial: true });
-    render(result(""), partial, theme, ctx);
-    vi.setSystemTime(1000 + ms);
+    const emptyOutput = result("");
+    const running = render(emptyOutput, partial, theme, ctx);
+    vi.advanceTimersByTime(2300);
+    const runningLines = running.render(100);
+    const runningText = runningLines.join("\n");
+    expect(runningText).toContain("2.3s · running");
     state.bashTiming.stop(ctx.toolCallId);
-    const text = render(result("done"), collapsed, theme, { ...ctx, isPartial: false })
-      .render(100)
-      .join("\n");
-    expect(text).toContain(`${expected} · ✓ exit 0`);
+    vi.advanceTimersByTime(5000);
+
+    const completedContext = {
+      ...ctx,
+      isPartial: false,
+      durationMs: 4200,
+      lastComponent: running,
+    };
+    const completedOutput = result("done");
+    const completed = render(completedOutput, collapsed, theme, completedContext);
+    const completedLines = completed.render(100);
+    const completedText = completedLines.join("\n");
+    expect(completedText).toContain("4.2s · ✓ exit 0");
+    expect(completedText).not.toContain("2.3s");
+    vi.advanceTimersByTime(5000);
+    const resizedLines = completed.render(80);
+    const resizedText = resizedLines.join("\n");
+    expect(resizedText).toContain("4.2s · ✓ exit 0");
+    const timerCount = vi.getTimerCount();
+    expect(timerCount).toBe(0);
   });
+
+  it.each([
+    { durationMs: 0, expected: "0.0s", isError: false },
+    { durationMs: 4200, expected: "4.2s", isError: false },
+    { durationMs: 4200, expected: "4.2s", isError: true },
+    { durationMs: 61000, expected: "1m1s", isError: false },
+    { durationMs: 3600000, expected: "1h", isError: false },
+    { durationMs: 3660000, expected: "1h1m", isError: false },
+  ])(
+    "renders recorded duration without live timing: $durationMs ms, error=$isError",
+    ({ durationMs, expected, isError }) => {
+      const { render } = fixture();
+      const ctx = context({ durationMs, isError });
+      const output = result("done");
+      const component = render(output, collapsed, theme, ctx);
+      const lines = component.render(100);
+      const text = lines.join("\n");
+      const status = isError ? "✗ error" : "✓ exit 0";
+      expect(text).toContain(`${expected} · ${status}`);
+      const timerCount = vi.getTimerCount();
+      expect(timerCount).toBe(0);
+    },
+  );
+
+  it.each([false, true])(
+    "does not invent duration for a final-only row (executionStarted=%s)",
+    (executionStarted) => {
+      const { render } = fixture();
+      const ctx = context({ executionStarted });
+      const output = result("done");
+      const component = render(output, collapsed, theme, ctx);
+      const lines = component.render(100);
+      const text = lines.join("\n");
+      expect(text).toContain("✓ exit 0 · collapsed");
+      expect(text).not.toContain("0.0s");
+      const timerCount = vi.getTimerCount();
+      expect(timerCount).toBe(0);
+    },
+  );
 
   it("keeps an already selected framed renderer and its timer active after hide", () => {
     const { state, render } = fixture();

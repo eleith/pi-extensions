@@ -40,8 +40,8 @@ export function buildBashRendering(
 
   const renderResult: BashRenderResult = (result, options, theme, context) => {
     state.bashTiming.update(context, options);
-    const { state: rowState, isError, isPartial } = context;
-    const paintContext = { state: rowState, isError, isPartial };
+    const { state: rowState, isError, isPartial, durationMs } = context;
+    const paintContext = { state: rowState, isError, isPartial, durationMs };
     return frameComponent(context, (width) =>
       renderBashResult(result, options, theme, paintContext, width),
     );
@@ -71,11 +71,13 @@ function renderBashResult(
   result: AgentToolResult<unknown>,
   options: BashRenderOptions,
   theme: BashTheme,
-  context: Pick<BashRenderContext, "state" | "isError" | "isPartial">,
+  context: Pick<BashRenderContext, "state" | "isError" | "isPartial" | "durationMs">,
   width: number,
 ): string {
   const status = frameStatus(context);
-  const elapsedMs = bashElapsed(context.state);
+  let elapsedMs = bashElapsed(context.state);
+  // Pi's execution duration is authoritative for completed rows, including restored history.
+  if (!options.isPartial && context.durationMs !== undefined) elapsedMs = context.durationMs;
   const rawOutput = textFromResult(result);
   // Only failed commands have a Pi status line; success and partial stdout are arbitrary text.
   const parsed = context.isError
@@ -83,7 +85,11 @@ function renderBashResult(
     : { body: rawOutput, exitCode: options.isPartial ? null : 0, timedOut: false, aborted: false };
   const { body, hidden } = previewBashOutput(parsed.body, options.expanded);
   const output = context.isError && body ? theme.fg("error", body) : body;
-  const duration = elapsedMs === undefined ? "" : theme.fg("dim", formatDuration(elapsedMs));
+  let duration = "";
+  if (elapsedMs !== undefined) {
+    const formattedDuration = formatDuration(elapsedMs);
+    duration = theme.fg("dim", formattedDuration);
+  }
   const runStatus = options.isPartial
     ? theme.fg("warning", body ? "running" : "running · no output yet")
     : bashSummaryLabel(parsed, theme) || (context.isError ? theme.fg("error", "✗ error") : "");

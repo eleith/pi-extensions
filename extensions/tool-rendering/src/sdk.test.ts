@@ -224,6 +224,40 @@ it("uses the resolver chain and keeps streamed rows stable across toggles", asyn
       isError: false,
     });
     expect(vi.getTimerCount()).toBe(0);
+    const completedResult = {
+      content: [{ type: "text" as const, text: "completed output" }],
+      details: undefined,
+      isError: false,
+      durationMs: 4200,
+    };
+    row.updateResult(completedResult);
+    const completedLines = row.render(80);
+    const completedText = completedLines.join("\n");
+    expect(completedText).toContain("4.2s");
+    expect(completedText).not.toContain("2.0s");
+
+    // Restored rows receive recorded duration without markExecutionStarted().
+    const restoredDefinition = resolve("bash");
+    const restored = new ToolExecutionComponent(
+      "bash",
+      "restored-bash",
+      { command: "printf restored" },
+      {},
+      restoredDefinition,
+      { requestRender } as never,
+      directory,
+    );
+    restored.setArgsComplete();
+    restored.updateResult(completedResult);
+    restored.setExpanded(true);
+    restored.invalidate();
+    const restoredLines = restored.render(80);
+    const restoredText = restoredLines.join("\n");
+    expect(restoredText).toContain("4.2s");
+    expect(restoredText).toContain("expanded");
+    const timerCount = vi.getTimerCount();
+    expect(timerCount).toBe(0);
+
     // Shutdown also stops an abandoned framed row without fabricating a final result.
     const abandoned = new ToolExecutionComponent(
       "bash",

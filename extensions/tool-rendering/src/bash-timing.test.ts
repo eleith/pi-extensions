@@ -39,14 +39,21 @@ afterEach(() => {
 });
 
 describe("BashTiming", () => {
-  it("is inert until an active, non-error execution is rendered", () => {
+  it("starts timing only for an observed running execution, never a final-only row", () => {
     const timing = new BashTiming();
-    expect(vi.getTimerCount()).toBe(0);
     const waiting = context({ executionStarted: false });
-    expect(timing.update(waiting, partial)).toBeUndefined();
-    expect(timing.update(context({ isError: true }), partial)).toBe(0);
-    expect(timing.update(context(), final)).toBe(0);
-    expect(vi.getTimerCount()).toBe(0);
+    const waitingElapsed = timing.update(waiting, partial);
+    expect(waitingElapsed).toBeUndefined();
+
+    const failed = context({ isError: true });
+    const failedElapsed = timing.update(failed, partial);
+    expect(failedElapsed).toBeUndefined();
+
+    const completed = context();
+    const completedElapsed = timing.update(completed, final);
+    expect(completedElapsed).toBeUndefined();
+    const timerCount = vi.getTimerCount();
+    expect(timerCount).toBe(0);
     timing.dispose();
   });
 
