@@ -10,8 +10,9 @@ import {
   ToolExecutionComponent,
   initTheme,
   type ExtensionUIContext,
+  type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import toolRendering from "./index.ts";
 
 const directory = await vi.hoisted(async () => {
@@ -171,6 +172,8 @@ it("uses the resolver chain and keeps streamed rows stable across toggles", asyn
     expect(readRow.render(80).join("\n")).not.toBe(dark);
     initTheme("dark", false);
 
+    checkOutputPadding(resolve, requestRender);
+
     vi.useFakeTimers();
     vi.setSystemTime(1000);
     const definition = resolve("bash");
@@ -285,3 +288,75 @@ it("uses the resolver chain and keeps streamed rows stable across toggles", asyn
     session.dispose();
   }
 });
+
+function checkOutputPadding(
+  resolve: (name: string) => ToolRenderers | undefined,
+  requestRender: () => void,
+): void {
+  const paddingCases = [
+    { name: "bash", args: { command: "printf '界🙂A'" } },
+    { name: "read", args: { path: "padding.txt" } },
+    { name: "grep", args: { pattern: "padding" } },
+    { name: "ls", args: {} },
+    { name: "find", args: { pattern: "*" } },
+    { name: "write", args: { path: "padding.txt", content: "padding-body" } },
+    { name: "edit", args: { path: "padding.txt", edits: [{ oldText: "old", newText: "new" }] } },
+  ];
+  const paddingResult = {
+    content: [{ type: "text" as const, text: "padding-body" }],
+    details: undefined,
+    isError: false,
+  };
+  for (const { name, args } of paddingCases) {
+    const definition = resolve(name);
+    const paddedRow = new ToolExecutionComponent(
+      name,
+      `padding-${name}`,
+      args,
+      {},
+      definition,
+      { requestRender } as never,
+      directory,
+    );
+    paddedRow.updateResult(paddingResult);
+    paddedRow.setExpanded(true);
+    const initial = paddedRow.render(80);
+    const initialHeader = stripTerminalSequences(initial[1]);
+    expect(initialHeader, name).toMatch(/^ ─/);
+    for (const outputPad of [1, 0, 1]) {
+      paddedRow.setOutputPad(outputPad);
+      const rendered = paddedRow.render(80);
+      const plain = rendered.map((line) => stripTerminalSequences(line));
+      const expectedPrefix = " ".repeat(outputPad) + "─";
+      const headerPrefix = plain[1].slice(0, outputPad + 1);
+      const footerPrefix = plain.at(-1)!.slice(0, outputPad + 1);
+      expect(headerPrefix, name).toBe(expectedPrefix);
+      expect(footerPrefix, name).toBe(expectedPrefix);
+      const body = plain.find((line) => line.includes("padding-body"));
+      expect(body, name).toBeDefined();
+      if (outputPad) {
+        for (const line of plain) {
+          if (!line.trim()) continue;
+          const left = line[0];
+          const right = line.at(-1);
+          expect(left, name).toBe(" ");
+          expect(right, name).toBe(" ");
+        }
+      }
+      for (const width of [1, 2, 3, 5, 80, 250]) {
+        const resized = paddedRow.render(width);
+        for (const line of resized) {
+          const columns = visibleWidth(line);
+          expect(columns, name).toBeLessThanOrEqual(width);
+        }
+      }
+    }
+    const failed = { ...paddingResult, isError: true };
+    paddedRow.updateResult(failed);
+    const errorLines = paddedRow.render(80);
+    const lastErrorLine = errorLines.at(-1)!;
+    const errorFooter = stripTerminalSequences(lastErrorLine);
+    expect(errorFooter, name).toMatch(/^ ─/);
+    expect(errorFooter, name).toContain("✗");
+  }
+}

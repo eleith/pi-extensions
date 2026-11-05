@@ -59,6 +59,60 @@ function plain(component: Component, width = 180): string {
     .map((line) => stripTerminalSequences(line).trimEnd())
     .join("\n");
 }
+it.each(["web_fetch", "web_fetch_batch"] as const)(
+  "applies native padding to %s headers, previews, and expanded content",
+  (name) => {
+    const subject = buildFetchRendering(name);
+    const unicode = "模型🙂é".repeat(12);
+    const page = outcome({ content: unicode });
+    const value =
+      name === "web_fetch"
+        ? page
+        : {
+            kind: "batch" as const,
+            total: 1,
+            succeeded: 1,
+            failed: 0,
+            cancelled: false,
+            truncated: false,
+            items: [page],
+          };
+    const data = presentResult(value);
+    const original = structuredClone(data);
+    const url = "https://example.test/article";
+    const args = name === "web_fetch" ? { url } : { requests: [{ url }] };
+    for (const expanded of [false, true]) {
+      const viewOptions = { ...options, expanded };
+      const flushContext = context({ args, expanded, outputPad: 0 });
+      const insetContext = context({ args, expanded, outputPad: 1 });
+      const flushCall = subject.renderCall(args, theme, flushContext);
+      const insetCall = subject.renderCall(args, theme, insetContext);
+      const flushResult = subject.renderResult(data, viewOptions, theme, flushContext);
+      const insetResult = subject.renderResult(data, viewOptions, theme, insetContext);
+      const pairs = [
+        { flush: flushCall, inset: insetCall },
+        { flush: flushResult, inset: insetResult },
+      ];
+      for (const pair of pairs) {
+        for (const width of [1, 2, 3, 5, 40, 80, 250]) {
+          const padding = width < 3 ? 0 : 1;
+          const contentWidth = width - padding * 2;
+          const flushLines = pair.flush.render(contentWidth);
+          const insetLines = pair.inset.render(width);
+          const margin = " ".repeat(padding);
+          const expected = flushLines.map((line) => `${margin}${line}${margin}`);
+          expect(insetLines).toEqual(expected);
+          for (const line of insetLines) {
+            const columns = visibleWidth(line);
+            expect(columns).toBeLessThanOrEqual(width);
+          }
+        }
+      }
+    }
+    expect(data).toEqual(original);
+  },
+);
+
 it("owns shared framed chrome, caches redraws and reuses call/result components", () => {
   const call = renderer.renderCall({ url: "https://example.test" }, theme, context());
   expect(call).toBeInstanceOf(FramedText);

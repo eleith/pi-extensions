@@ -46,6 +46,73 @@ it("uses actual component width again after resize, with a 210-column cap", () =
   expect(stripTerminalSequences(component.render(80)[0])).toContain("write");
 });
 
+it.each([0, 1])("honors outputPad=%s within the native content width", (outputPad) => {
+  const payload = "A界é🙂Z";
+  const body = theme.fg("toolOutput", payload);
+  const painter = vi.fn((width: number) => {
+    const title = frameTop("padding", "success", theme, width);
+    const result = frameResultWithBottomLabel(body, "expanded", "success", theme, width, true);
+    return `${title}\n${result}`;
+  });
+  const component = frameComponent({ lastComponent: undefined, outputPad }, painter);
+  for (const width of [1, 2, 3, 4, 5, 20, 80, 250, 3, 80]) {
+    const lines = component.render(width);
+    const padding = width < 3 ? 0 : outputPad;
+    const contentWidth = width - padding * 2;
+    const expectedWidth = Math.min(contentWidth, 210);
+    const paintedWidth = painter.mock.lastCall?.[0];
+    expect(paintedWidth).toBe(expectedWidth);
+    const plain = lines.map((line) => stripTerminalSequences(line));
+    const prefix = " ".repeat(padding);
+    for (const border of [plain[0], plain.at(-1)!]) {
+      const margin = border.slice(0, padding);
+      expect(margin).toBe(prefix);
+      const content = border.slice(padding).trimEnd();
+      const columns = visibleWidth(content);
+      expect(columns).toBe(expectedWidth);
+    }
+    const content = plain.slice(1, -1);
+    const unpadded = content.map((line) => line.slice(padding).trimEnd());
+    const restored = unpadded.join("");
+    const expected = contentWidth === 1 ? "A…é…Z" : payload;
+    expect(restored).toBe(expected);
+    for (const line of lines) {
+      const columns = visibleWidth(line);
+      expect(columns).toBeLessThanOrEqual(width);
+      if (padding) {
+        const unstyled = stripTerminalSequences(line);
+        const left = unstyled[0];
+        const right = unstyled.at(-1);
+        expect(left).toBe(" ");
+        expect(right).toBe(" ");
+      }
+    }
+    const repeated = component.render(width);
+    expect(repeated).toBe(lines);
+  }
+});
+
+it.each([80, 250])("updates cached padding at width %s, including capped painters", (width) => {
+  const painter = vi.fn((paintWidth: number) => frameTop("padding", "success", theme, paintWidth));
+  const component = frameComponent({ lastComponent: undefined, outputPad: 0 }, painter);
+  const original = component.render(width);
+  component.setPaddingX(1);
+  const padded = component.render(width);
+  const first = stripTerminalSequences(padded[0]);
+  expect(first).toMatch(/^ ─/);
+  const unpaddedWidth = Math.min(width, 210);
+  const paddedWidth = Math.min(width - 2, 210);
+  const widths = painter.mock.calls.map(([paintWidth]) => paintWidth);
+  expect(widths).toEqual([unpaddedWidth, paddedWidth]);
+  component.setPaddingX(1);
+  const repeated = component.render(width);
+  expect(repeated).toBe(padded);
+  const reused = frameComponent({ lastComponent: component, outputPad: 0 }, painter);
+  expect(reused).toBe(component);
+  const restored = reused.render(width);
+  expect(restored).toEqual(original);
+});
+
 it("reuses painting and Text layout on unchanged transcript redraws", () => {
   const painter = vi.fn((width: number) => frameTop("read", "success", theme, width));
   const component = frameComponent({ lastComponent: undefined }, painter);

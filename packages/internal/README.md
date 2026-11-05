@@ -13,4 +13,6 @@ settings object with defaults.
 
 ## frames
 
-`frame` provides shared tool-rendering components.
+`frame` provides shared tool-rendering components. `frameComponent()` applies
+`context.outputPad` through native `Text` padding. Its painter receives the available
+content width after padding, capped at 210 columns.

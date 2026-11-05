@@ -11,6 +11,7 @@ export class FramedText extends Text {
   private painter: (width: number) => string = () => "";
   private paintedWidth: number | undefined;
   private paintedText: string | undefined;
+  private outputPad = 0;
 
   constructor() {
     super("", 0, 0);
@@ -26,12 +27,28 @@ export class FramedText extends Text {
     super.invalidate();
   }
 
+  override setPaddingX(padding: number): void {
+    if (padding === this.outputPad) return;
+    this.outputPad = padding;
+    super.setPaddingX(padding);
+  }
+
   override render(width: number): string[] {
-    const paintWidth = Math.max(1, Math.min(width, 210));
+    // Match Text's narrow-terminal clamp so the painter sees its actual content width.
+    const maxPadding = Math.floor((width - 1) / 2);
+    const availablePadding = Math.max(0, maxPadding);
+    const padding = Math.min(this.outputPad, availablePadding);
+    const contentWidth = Math.max(1, width - padding * 2);
+    const paintWidth = Math.min(contentWidth, 210);
     if (this.paintedWidth !== paintWidth) {
       let text: string;
       try {
         text = this.painter(paintWidth);
+        // Native Text cannot fit wide glyphs in a one-column content area.
+        if (paintWidth === 1) {
+          const narrowLines = frameBody(text, paintWidth, true);
+          text = narrowLines.join("\n");
+        }
       } catch {
         // Deferred painting runs outside Pi's guarded renderer callbacks.
         text = "Tool output could not be rendered.";
@@ -48,11 +65,13 @@ export class FramedText extends Text {
 }
 
 export function frameComponent(
-  context: { lastComponent: Component | undefined },
+  context: { lastComponent: Component | undefined; outputPad?: number },
   painter: (width: number) => string,
 ): FramedText {
   const component =
     context.lastComponent instanceof FramedText ? context.lastComponent : new FramedText();
+  const outputPad = context.outputPad ?? 0;
+  component.setPaddingX(outputPad);
   component.setPainter(painter);
   return component;
 }

@@ -59,6 +59,47 @@ function plain(component: Component, width = 180) {
     .join("\n");
 }
 
+it.each([false, true])(
+  "applies native padding to search calls and results (error=%s)",
+  (isError) => {
+    const args = { query: "padding query 界🙂" };
+    const unicode = "模型🙂é".repeat(12);
+    const status = isError ? "error" : "done";
+    const metadata = details({ status });
+    const data = result(unicode, { details: metadata });
+    const original = structuredClone(data);
+    for (const expanded of [false, true]) {
+      const viewOptions = { ...options, expanded };
+      const flushContext = context({ args, expanded, isError, outputPad: 0 });
+      const insetContext = context({ args, expanded, isError, outputPad: 1 });
+      const flushCall = renderer.renderCall(args, theme, flushContext);
+      const insetCall = renderer.renderCall(args, theme, insetContext);
+      const flushResult = renderer.renderResult(data, viewOptions, theme, flushContext);
+      const insetResult = renderer.renderResult(data, viewOptions, theme, insetContext);
+      const pairs = [
+        { flush: flushCall, inset: insetCall },
+        { flush: flushResult, inset: insetResult },
+      ];
+      for (const pair of pairs) {
+        for (const width of [1, 2, 3, 5, 40, 80, 250]) {
+          const padding = width < 3 ? 0 : 1;
+          const contentWidth = width - padding * 2;
+          const flushLines = pair.flush.render(contentWidth);
+          const insetLines = pair.inset.render(width);
+          const margin = " ".repeat(padding);
+          const expected = flushLines.map((line) => `${margin}${line}${margin}`);
+          expect(insetLines).toEqual(expected);
+          for (const line of insetLines) {
+            const columns = visibleWidth(line);
+            expect(columns).toBeLessThanOrEqual(width);
+          }
+        }
+      }
+    }
+    expect(data).toEqual(original);
+  },
+);
+
 it("defaults result details only when the override is omitted", () => {
   expect(result().details).toEqual(details());
   expect(result("", {}).details).toEqual(details());
