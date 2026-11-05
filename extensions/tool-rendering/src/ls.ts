@@ -12,8 +12,14 @@ import {
   frameTop,
   resultLabel,
 } from "./frame.ts";
-import { normalizeLineEndings, sanitizeDisplayText, textFromResult } from "./tool-result.ts";
+import {
+  normalizeLineEndings,
+  rawTextFromResult,
+  sanitizeDisplayText,
+  textFromResult,
+} from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
+import { splitListingNotice } from "./listing-output.ts";
 
 type BuiltinLsTool = ReturnType<typeof createLsToolDefinition>;
 type LsRenderCall = NonNullable<BuiltinLsTool["renderCall"]>;
@@ -60,23 +66,32 @@ function renderLsResult(
   const status = frameStatus(context);
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
-  const rawText = result.details?.rendering?.text ?? textFromResult(result);
-  const sanitizedText = sanitizeDisplayText(rawText);
-  const text = normalizeLineEndings(sanitizedText);
-  const lines =
-    text.trim() === "(empty directory)"
-      ? []
-      : text.split("\n").filter((line) => line.trim().length > 0);
-  const { shown, hidden } = previewLines(lines, expanded, 10);
-  const body = renderEntries(shown, theme);
-  const limit = result.details?.entryLimitReached ? " · limit reached" : "";
-  return frameResultWithBottomLabel(
-    body,
-    resultLabel(`${lines.length} entries${limit}`, expanded, hidden, theme),
-    status,
-    theme,
-    width,
+  const rawText = result.details?.rendering?.text ?? rawTextFromResult(result);
+  const normalizedText = normalizeLineEndings(rawText);
+  const entryLimit = result.details?.entryLimitReached;
+  const truncation = result.details?.truncation;
+  const { text: listingText, notice: listingNotice } = splitListingNotice(
+    normalizedText,
+    "ls",
+    entryLimit,
+    truncation,
   );
+  const text = sanitizeDisplayText(listingText);
+  const notice = sanitizeDisplayText(listingNotice);
+  const empty =
+    text.trim() === "(empty directory)" && entryLimit === undefined && !truncation?.truncated;
+  const lines = empty ? [] : text.split("\n").filter((line) => line.trim().length > 0);
+  const { shown, hidden } = previewLines(lines, expanded, 10);
+  let body = renderEntries(shown, theme);
+  if (notice) {
+    const warning = theme.fg("warning", notice);
+    body = body ? `${body}\n\n${warning}` : warning;
+  }
+  const limit = entryLimit === undefined ? "" : " · limit reached";
+  const truncated = truncation?.truncated ? " · truncated" : "";
+  const summary = `${lines.length} entries${limit}${truncated}`;
+  const label = resultLabel(summary, expanded, hidden, theme);
+  return frameResultWithBottomLabel(body, label, status, theme, width);
 }
 
 function renderEntries(lines: string[], theme: LsTheme): string {

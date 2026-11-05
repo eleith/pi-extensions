@@ -41,11 +41,16 @@ function stripOscAndApcStrings(text: string): string {
   return parts.join("");
 }
 
-export function textFromResult(result: AgentToolResult<unknown>): string {
-  const text = result.content
+/** Read text blocks without sanitation so structured suffixes can be separated first. */
+export function rawTextFromResult(result: AgentToolResult<unknown>): string {
+  return result.content
     .filter((item): item is { type: "text"; text: string } => item.type === "text")
     .map((item) => item.text)
     .join("\n");
+}
+
+export function textFromResult(result: AgentToolResult<unknown>): string {
+  const text = rawTextFromResult(result);
   return sanitizeDisplayText(text);
 }
 

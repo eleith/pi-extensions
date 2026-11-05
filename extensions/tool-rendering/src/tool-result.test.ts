@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { expect, it } from "vitest";
-import { sanitizeDisplayText, textFromResult } from "./tool-result.ts";
+import { rawTextFromResult, sanitizeDisplayText, textFromResult } from "./tool-result.ts";
 
 it.each([
   ["SGR styles", "\x1b[31mvisible\x1b[0m"],
@@ -79,6 +79,8 @@ it("sanitizes text blocks without changing model-facing results or image data", 
   for (const item of result.content) Object.freeze(item);
   Object.freeze(result.details);
   Object.freeze(result.structuredContent);
+  const raw = rawTextFromResult(result);
+  expect(raw).toBe("\x1b[31mone\x1b[0m\n\x1b]52;c;private\x07two\x00");
   const actual = textFromResult(result);
   expect(actual).toBe("one\ntwo");
   expect(result).toEqual(original);

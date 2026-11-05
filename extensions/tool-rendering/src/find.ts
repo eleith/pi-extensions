@@ -13,8 +13,14 @@ import {
   frameTop,
   resultLabel,
 } from "./frame.ts";
-import { normalizeLineEndings, sanitizeDisplayText, textFromResult } from "./tool-result.ts";
+import {
+  normalizeLineEndings,
+  rawTextFromResult,
+  sanitizeDisplayText,
+  textFromResult,
+} from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
+import { splitListingNotice } from "./listing-output.ts";
 
 type BuiltinFindTool = ReturnType<typeof createFindToolDefinition>;
 type FindRenderCall = NonNullable<BuiltinFindTool["renderCall"]>;
@@ -62,24 +68,35 @@ function renderFindResult(
   const status = frameStatus(context);
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
-  const rawText = result.details?.rendering?.text ?? textFromResult(result);
-  const sanitizedText = sanitizeDisplayText(rawText);
-  const text = normalizeLineEndings(sanitizedText);
-  const paths =
-    text.trim() === "No files found matching pattern"
-      ? []
-      : text.split("\n").filter((line) => line.trim().length > 0);
+  const rawText = result.details?.rendering?.text ?? rawTextFromResult(result);
+  const normalizedText = normalizeLineEndings(rawText);
+  const resultLimit = result.details?.resultLimitReached;
+  const truncation = result.details?.truncation;
+  const { text: listingText, notice: listingNotice } = splitListingNotice(
+    normalizedText,
+    "find",
+    resultLimit,
+    truncation,
+  );
+  const text = sanitizeDisplayText(listingText);
+  const notice = sanitizeDisplayText(listingNotice);
+  const empty =
+    text.trim() === "No files found matching pattern" &&
+    resultLimit === undefined &&
+    !truncation?.truncated;
+  const paths = empty ? [] : text.split("\n").filter((line) => line.trim().length > 0);
   // Three paths in separate directories use at most eight grouped lines.
   const { shown, hidden } = previewLines(paths, expanded, 3);
-  const body = renderGroupedPaths(shown, theme);
-  const limit = result.details?.resultLimitReached ? " · limit reached" : "";
-  return frameResultWithBottomLabel(
-    body,
-    resultLabel(`${paths.length} files${limit}`, expanded, hidden, theme),
-    status,
-    theme,
-    width,
-  );
+  let body = renderGroupedPaths(shown, theme);
+  if (notice) {
+    const warning = theme.fg("warning", notice);
+    body = body ? `${body}\n\n${warning}` : warning;
+  }
+  const limit = resultLimit === undefined ? "" : " · limit reached";
+  const truncated = truncation?.truncated ? " · truncated" : "";
+  const summary = `${paths.length} files${limit}${truncated}`;
+  const label = resultLabel(summary, expanded, hidden, theme);
+  return frameResultWithBottomLabel(body, label, status, theme, width);
 }
 
 function renderGroupedPaths(paths: string[], theme: FindTheme): string {

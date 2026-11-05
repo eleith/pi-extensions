@@ -1,5 +1,15 @@
 import { rmSync } from "node:fs";
-import { truncateHead, type Theme, type ToolRenderers } from "@earendil-works/pi-coding-agent";
+import {
+  createLsTool,
+  createFindTool,
+  DEFAULT_MAX_BYTES,
+  truncateHead,
+  type AgentToolResult,
+  type LsToolDetails,
+  type FindToolDetails,
+  type Theme,
+  type ToolRenderers,
+} from "@earendil-works/pi-coding-agent";
 import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { afterAll, expect, it, vi } from "vitest";
 import { buildReadRendering } from "./read.ts";
@@ -544,3 +554,176 @@ it("keeps empty searches and directories distinct from errors", () => {
     ),
   ).toContain("0 entries");
 });
+
+const nativeListingCases = (["ls", "find"] as const).flatMap((name) => [
+  { name, limit: 2, limitReached: true, truncated: false, mode: "many" },
+  { name, limit: 1000, limitReached: false, truncated: true, mode: "many" },
+  { name, limit: 300, limitReached: true, truncated: true, mode: "many" },
+  { name, limit: 1000, limitReached: false, truncated: true, mode: "oversized" },
+  { name, limit: 1, limitReached: true, truncated: false, mode: "sentinel" },
+  { name, limit: 1, limitReached: true, truncated: false, mode: "unterminated" },
+]);
+it.each(nativeListingCases)(
+  "separates native $name notices (limit=$limit, mode=$mode) in both views",
+  async ({ name, limit, limitReached, truncated, mode }) => {
+    const sentinel = name === "ls" ? "(empty directory)" : "No files found matching pattern";
+    let entries: string[];
+    if (mode === "sentinel") entries = [sentinel, "z"];
+    else if (mode === "unterminated") entries = ["a\x1b]unfinished", "z"];
+    else if (mode === "oversized") entries = ["x".repeat(DEFAULT_MAX_BYTES + 1)];
+    else {
+      const suffix = "x".repeat(200);
+      entries = Array.from({ length: 400 }, (_, index) => `entry-${index}-${suffix}`);
+    }
+    const native =
+      name === "ls"
+        ? createLsTool(directory, {
+            operations: {
+              exists: () => true,
+              stat: (path) => ({ isDirectory: () => path === directory }),
+              readdir: () => [...entries],
+            },
+          })
+        : createFindTool(directory, {
+            operations: {
+              exists: () => true,
+              glob: (_pattern, _cwd, options) => entries.slice(0, options.limit),
+            },
+          });
+    const args = { path: directory, pattern: "*", limit };
+    const result: AgentToolResult<LsToolDetails | FindToolDetails | undefined> =
+      await native.execute("native-listing", args);
+    const original = structuredClone(result);
+    const nativeContent = result.content[0];
+    if (nativeContent.type !== "text") throw new Error("Expected native listing text");
+    const noticeStart = nativeContent.text.lastIndexOf("\n\n[");
+    expect(noticeStart).toBeGreaterThanOrEqual(0);
+    const expectedNotice = nativeContent.text.slice(noticeStart + 2);
+    const limitKey = name === "ls" ? "entryLimitReached" : "resultLimitReached";
+    const hasLimit = result.details !== undefined && limitKey in result.details;
+    expect(hasLimit).toBe(limitReached);
+    const isTruncated = result.details?.truncation?.truncated ?? false;
+    expect(isTruncated).toBe(truncated);
+    const count = result.details?.truncation?.outputLines ?? limit;
+    const unit = name === "ls" ? "entries" : "files";
+    const limitLabel = limitReached ? " · limit reached" : "";
+    const truncatedLabel = truncated ? " · truncated" : "";
+    const summary = `${count} ${unit}${limitLabel}${truncatedLabel}`;
+    const captured = capture(name);
+    const tool = erased(captured.tool);
+    const fg = vi.fn(minimalTheme.fg);
+    const coloredTheme = { ...minimalTheme, fg } as unknown as Theme;
+    for (const expanded of [false, true]) {
+      fg.mockClear();
+      const renderOptions = { ...options, expanded };
+      const ctx = context(args, { expanded });
+      const component = tool.renderResult!(result, renderOptions, coloredTheme, ctx);
+      const output = text(component);
+      expect(output).toContain(summary);
+      expect(output).not.toMatch(/(?:├──|└──) \[/);
+      const warnings = fg.mock.calls.filter(([color]) => color === "warning");
+      expect(warnings).toEqual([["warning", expectedNotice]]);
+      const outputLines = output.split("\n");
+      const noticeIndex = outputLines.indexOf(expectedNotice);
+      expect(noticeIndex).toBe(outputLines.length - 2);
+      const footer = outputLines.at(-1);
+      expect(footer).toContain(summary);
+      if (mode === "sentinel") expect(output).toContain(`└── ${sentinel}`);
+      if (mode === "unterminated") {
+        expect(output).toContain("└── a");
+        expect(output).not.toContain("\x1b");
+      }
+      const previewSize = name === "ls" ? 10 : 3;
+      const hidden = expanded ? 0 : Math.max(0, count - previewSize);
+      if (hidden > 0) expect(output).toContain(`collapsed · ${hidden} hidden`);
+      else expect(output).not.toContain("hidden");
+      if (!expanded) {
+        const renderedLines = component.render(180);
+        const maxLines = name === "ls" ? 13 : 11;
+        expect(renderedLines.length).toBeLessThanOrEqual(maxLines);
+      }
+      expect(result).toEqual(original);
+    }
+  },
+);
+
+it("keeps the fd find suggestion outside directory groups", () => {
+  const { tool } = capture("find");
+  const notice = "[2 results limit reached. Use limit=4 for more, or refine pattern]";
+  const result = {
+    content: [{ type: "text" as const, text: `src/a.ts\nsrc/b.ts\n\n${notice}` }],
+    details: { resultLimitReached: 2 },
+  };
+  const ctx = context(presets.find.args);
+  const component = tool.renderResult!(result, options, theme, ctx);
+  const output = text(component);
+  expect(output).toContain(`src/\n  ├── a.ts\n  └── b.ts\n\n${notice}\n`);
+  expect(output).toContain("2 files · limit reached · collapsed");
+  expect(output).not.toContain("hidden");
+});
+
+it.each(["ls", "find"] as const)(
+  "preserves unrecognized %s bracketed filenames even with limit metadata",
+  (name) => {
+    const captured = capture(name);
+    const tool = erased(captured.tool);
+    const result = {
+      content: [{ type: "text" as const, text: "first\nsecond\n\n[not a native notice]" }],
+      details: { entryLimitReached: 2, resultLimitReached: 2 },
+    };
+    const ctx = context(presets[name].args);
+    const component = tool.renderResult!(result, options, theme, ctx);
+    const output = text(component);
+    const unit = name === "ls" ? "entries" : "files";
+    expect(output).toContain("└── [not a native notice]");
+    expect(output).toContain(`3 ${unit} · limit reached · collapsed`);
+  },
+);
+
+it.each(["ls", "find"] as const)(
+  "does not strip native-looking %s filenames when truncation metadata is false",
+  (name) => {
+    const captured = capture(name);
+    const tool = erased(captured.tool);
+    const rawText = "first\n\n[50.0KB limit reached]";
+    const truncation = truncateHead(rawText);
+    const result = {
+      content: [{ type: "text" as const, text: rawText }],
+      details: { truncation },
+    };
+    const ctx = context(presets[name].args);
+    const component = tool.renderResult!(result, options, theme, ctx);
+    const output = text(component);
+    const unit = name === "ls" ? "entries" : "files";
+    expect(output).toContain("└── [50.0KB limit reached]");
+    expect(output).toContain(`2 ${unit} · collapsed`);
+    expect(output).not.toContain("truncated");
+  },
+);
+
+it.each(["ls", "find"] as const)(
+  "keeps legacy %s display overrides authoritative when byte metadata is present",
+  (name) => {
+    const captured = capture(name);
+    const tool = erased(captured.tool);
+    const truncation = truncateHead("model-first\nmodel-second", { maxBytes: 12 });
+    const result = {
+      content: [{ type: "text" as const, text: "model-facing text" }],
+      details: {
+        truncation,
+        rendering: { text: "\x1b[31msrc/old.ts\x1b[0m\nsrc/next.ts" },
+      },
+    };
+    const original = structuredClone(result);
+    const ctx = context(presets[name].args);
+    const component = tool.renderResult!(result, options, theme, ctx);
+    const output = text(component);
+    const unit = name === "ls" ? "entries" : "files";
+    expect(output).toContain("old.ts");
+    expect(output).toContain("next.ts");
+    expect(output).toContain(`2 ${unit} · truncated · collapsed`);
+    expect(output).not.toContain("model-");
+    expect(output).not.toContain("\x1b");
+    expect(result).toEqual(original);
+  },
+);
