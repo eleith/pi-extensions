@@ -8,14 +8,13 @@ import {
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import codex from "./index.ts";
-import { fetchCodexModelCatalog, fetchCodexUsage, readCodexAuthScope } from "./client.ts";
+import { fetchCodexModelCatalog, fetchCodexUsage } from "./client.ts";
 import { customInteractionUI } from "./custom-interaction.test-helper.ts";
 
 vi.mock("./client.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./client.ts")>()),
   fetchCodexUsage: vi.fn(),
   fetchCodexModelCatalog: vi.fn(),
-  readCodexAuthScope: vi.fn(),
 }));
 
 const directory = await vi.hoisted(async () => {
@@ -43,7 +42,6 @@ afterEach(() => {
 async function load(prefix = "eleith", mode: ExtensionCommandContext["mode"] = "print") {
   vi.mocked(fetchCodexUsage).mockReset();
   vi.mocked(fetchCodexModelCatalog).mockReset();
-  vi.mocked(readCodexAuthScope).mockReset();
   writeFileSync(configPath, JSON.stringify({ commandPrefix: prefix }));
   type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
   type Listener = (
@@ -154,7 +152,6 @@ it("wires restore/reconcile hooks without provider calls for an unsupported mode
   expect(context.pi.on.mock.calls.map(([name]) => name)).not.toContain("before_agent_start");
   expect(fetchCodexUsage).not.toHaveBeenCalled();
   expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
-  expect(readCodexAuthScope).not.toHaveBeenCalled();
 });
 
 it("rejects removed commands and additional control arguments without side effects", async () => {
@@ -176,7 +173,6 @@ it("rejects removed commands and additional control arguments without side effec
     expect(context.notify).toHaveBeenLastCalledWith(usage, "warning");
   }
   expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
-  expect(readCodexAuthScope).not.toHaveBeenCalled();
   expect(fetchCodexUsage).not.toHaveBeenCalled();
   expect(context.pi.appendEntry).not.toHaveBeenCalled();
   expect(context.pi.setModel).not.toHaveBeenCalled();
@@ -265,7 +261,6 @@ it("combines context and fast mode in a read-only dashboard with the configured 
   expect(getProviderAuth).not.toHaveBeenCalled();
   expect(fetchCodexUsage).not.toHaveBeenCalled();
   expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
-  expect(readCodexAuthScope).not.toHaveBeenCalled();
   expect(context.pi.appendEntry).not.toHaveBeenCalled();
   expect(context.pi.setModel).not.toHaveBeenCalled();
   const dashboard = context.notify.mock.calls[0][0];
@@ -277,7 +272,6 @@ it("combines context and fast mode in a read-only dashboard with the configured 
   expect(getProviderAuth).not.toHaveBeenCalled();
   expect(fetchCodexUsage).not.toHaveBeenCalled();
   expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
-  expect(readCodexAuthScope).not.toHaveBeenCalled();
   expect(context.pi.appendEntry).not.toHaveBeenCalled();
   expect(context.pi.setModel).not.toHaveBeenCalled();
   await context.emit("session_shutdown");
@@ -324,7 +318,6 @@ it("routes every TUI read-only alias to the shared overview inspector, not notif
   expect(context.notify).not.toHaveBeenCalled();
   expect(fetchCodexUsage).not.toHaveBeenCalled();
   expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
-  expect(readCodexAuthScope).not.toHaveBeenCalled();
   expect(context.pi.setModel).not.toHaveBeenCalled();
   expect(context.pi.appendEntry).not.toHaveBeenCalled();
   await context.emit("session_shutdown");

@@ -1,12 +1,6 @@
-import { createHash } from "node:crypto";
 import type { Api, AuthResult, Model } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  fetchCodexModelCatalog,
-  fetchCodexUsage,
-  readCodexAuthScope,
-  type CodexAccountRegistry,
-} from "./client.ts";
+import { fetchCodexModelCatalog, fetchCodexUsage, type CodexAccountRegistry } from "./client.ts";
 
 const BASE_URL = "https://chatgpt.com/backend-api";
 const model: Model<Api> = {
@@ -72,67 +66,63 @@ it("uses Pi's existing Codex auth for the fixed account endpoint", async () => {
   });
 });
 
-it("uses the same Pi credentials for the fixed versioned model catalog", async () => {
+it("returns raw catalog JSON using only Pi's resolved routing credentials", async () => {
   const f = fixture();
+  f.auth.auth.headers = {
+    "ChatGPT-Account-Id": "unused-account",
+    Authorization: "unused-token",
+    "X-Unrelated-Secret": "unused-secret",
+  };
   const catalog = { models: [{ slug: "future-model", service_tiers: [{ id: "priority" }] }] };
-  f.fetcher.mockResolvedValue(json(catalog));
+  const response = json(catalog);
+  f.fetcher.mockResolvedValue(response);
   const result = await fetchCodexModelCatalog(f.registry, undefined, f.fetcher);
-  expect(result.data).toEqual(catalog);
+  expect(result).toEqual(catalog);
   expect(f.registry.getProviderAuth).toHaveBeenCalledExactlyOnceWith("openai-codex");
+  const requestOptions = expect.objectContaining({ method: "GET", redirect: "error" });
   expect(f.fetcher).toHaveBeenCalledExactlyOnceWith(
     `${BASE_URL}/codex/models?client_version=0.162.0`,
-    expect.objectContaining({ method: "GET", redirect: "error" }),
+    requestOptions,
   );
   const headers = new Headers(f.fetcher.mock.calls[0][1]?.headers);
-  expect(headers.get("authorization")).toBe(`Bearer ${f.auth.auth.apiKey}`);
-  expect(headers.get("chatgpt-account-id")).toBe("test-account");
-  expect(result.authScope).toBe(
-    createHash("sha256")
-      .update(JSON.stringify([headers.get("authorization"), headers.get("chatgpt-account-id")]))
-      .digest("hex"),
-  );
-  expect(Object.keys(result).sort()).toEqual(["authScope", "data"]);
-  expect(JSON.stringify(result)).not.toContain(f.auth.auth.apiKey);
-  expect(JSON.stringify(result)).not.toContain("test-account");
-});
-
-it("reads a stable auth scope without fetching and ignores unused provider headers", async () => {
-  const f = fixture();
-  const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("must not fetch"));
-  try {
-    const scope = await readCodexAuthScope(f.registry);
-    f.auth.auth.headers = {
-      "ChatGPT-Account-Id": "unused-account",
-      Authorization: "unused-token",
-      "X-Unrelated-Secret": "unused-secret",
-    };
-    expect(await readCodexAuthScope(f.registry)).toBe(scope);
-    expect(scope).toMatch(/^[a-f0-9]{64}$/);
-    expect(scope).not.toContain(f.auth.auth.apiKey);
-    expect(scope).not.toContain("test-account");
-    expect(f.registry.getProviderAuth).toHaveBeenCalledTimes(2);
-    expect(fetchSpy).not.toHaveBeenCalled();
-    const catalog = await fetchCodexModelCatalog(f.registry, undefined, f.fetcher);
-    expect(catalog.authScope).toBe(scope);
-  } finally {
-    fetchSpy.mockRestore();
-  }
+  const actualHeaders = Object.fromEntries(headers);
+  expect(actualHeaders).toEqual({
+    accept: "application/json",
+    authorization: `Bearer ${f.auth.auth.apiKey}`,
+    "chatgpt-account-id": "test-account",
+  });
+  const serialized = JSON.stringify(result);
+  expect(serialized).not.toContain(f.auth.auth.apiKey);
+  expect(serialized).not.toContain("test-account");
 });
 
 it.each(["token refresh", "account change"] as const)(
-  "changes the scope on %s and binds the catalog to its own resolved credentials",
+  "resolves fresh catalog credentials after %s",
   async (change) => {
     const f = fixture();
-    const previous = await readCodexAuthScope(f.registry);
-    f.auth.auth.apiKey =
-      change === "token refresh" ? `${token()}-refreshed` : token("another-account");
-    const catalog = await fetchCodexModelCatalog(f.registry, undefined, f.fetcher);
-    expect(catalog.authScope).not.toBe(previous);
-    expect(await readCodexAuthScope(f.registry)).toBe(catalog.authScope);
+    const originalToken = f.auth.auth.apiKey;
+    await fetchCodexModelCatalog(f.registry, undefined, f.fetcher);
+    const nextAccount = change === "token refresh" ? "test-account" : "another-account";
+    const nextToken =
+      change === "token refresh" ? `${originalToken}-refreshed` : token(nextAccount);
+    f.auth.auth.apiKey = nextToken;
+    await fetchCodexModelCatalog(f.registry, undefined, f.fetcher);
+    const credentials = f.fetcher.mock.calls.map(([, init]) => {
+      const headers = new Headers(init?.headers);
+      return {
+        authorization: headers.get("authorization"),
+        account: headers.get("chatgpt-account-id"),
+      };
+    });
+    expect(credentials).toEqual([
+      { authorization: `Bearer ${originalToken}`, account: "test-account" },
+      { authorization: `Bearer ${nextToken}`, account: nextAccount },
+    ]);
+    expect(f.registry.getProviderAuth).toHaveBeenCalledTimes(2);
   },
 );
 
-describe("auth-only validation without HTTP", () => {
+describe("catalog credential validation before HTTP", () => {
   const unexpectedFetch = vi.fn<typeof fetch>(async () => {
     throw new Error("must not fetch");
   });
@@ -156,19 +146,22 @@ describe("auth-only validation without HTTP", () => {
   it("rejects an overridden provider endpoint", async () => {
     const account = fixture();
     account.provider.baseUrl = "https://gateway.invalid";
-    await expect(readCodexAuthScope(account.registry)).rejects.toMatchObject(unsupportedProvider);
+    const request = fetchCodexModelCatalog(account.registry);
+    await expect(request).rejects.toMatchObject(unsupportedProvider);
   });
 
   it("rejects a catalog model at a different endpoint", async () => {
     const account = fixture();
     account.provider.getModels = () => [{ ...model, baseUrl: "https://gateway.invalid" }];
-    await expect(readCodexAuthScope(account.registry)).rejects.toMatchObject(unsupportedProvider);
+    const request = fetchCodexModelCatalog(account.registry);
+    await expect(request).rejects.toMatchObject(unsupportedProvider);
   });
 
   it("rejects an endpoint override in resolved credentials", async () => {
     const account = fixture();
     account.auth.auth.baseUrl = "https://gateway.invalid";
-    await expect(readCodexAuthScope(account.registry)).rejects.toMatchObject({
+    const request = fetchCodexModelCatalog(account.registry);
+    await expect(request).rejects.toMatchObject({
       code: "unsupported",
       message: "Account requests do not support endpoint overrides.",
     });
@@ -177,25 +170,30 @@ describe("auth-only validation without HTTP", () => {
   it("requires an OAuth availability snapshot", async () => {
     const account = fixture();
     account.registry.isUsingOAuth.mockReturnValue(false);
-    await expect(readCodexAuthScope(account.registry)).rejects.toMatchObject(unavailableAuth);
+    const request = fetchCodexModelCatalog(account.registry);
+    await expect(request).rejects.toMatchObject(unavailableAuth);
   });
 
   it("rejects a non-OAuth resolution even when the snapshot says OAuth", async () => {
     const account = fixture();
     account.auth.source = "models.json";
-    await expect(readCodexAuthScope(account.registry)).rejects.toMatchObject(unavailableAuth);
+    const request = fetchCodexModelCatalog(account.registry);
+    await expect(request).rejects.toMatchObject(unavailableAuth);
   });
 
   it("requires the token's account-routing claim", async () => {
     const account = fixture();
     account.auth.auth.apiKey = "e30.e30.private-token";
-    await expect(readCodexAuthScope(account.registry)).rejects.toMatchObject(unavailableAuth);
+    const request = fetchCodexModelCatalog(account.registry);
+    await expect(request).rejects.toMatchObject(unavailableAuth);
   });
 
   it("does not repeat private Pi refresh errors", async () => {
     const account = fixture();
-    account.registry.getProviderAuth.mockRejectedValue(new Error("private refresh details"));
-    await expect(readCodexAuthScope(account.registry)).rejects.toMatchObject(unavailableAuth);
+    const refreshError = new Error("private refresh details");
+    account.registry.getProviderAuth.mockRejectedValue(refreshError);
+    const request = fetchCodexModelCatalog(account.registry);
+    await expect(request).rejects.toMatchObject(unavailableAuth);
   });
 });
 
@@ -428,63 +426,66 @@ it("reports invalid JSON without repeating returned content", async () => {
   });
 });
 
-it.each(["usage", "catalog", "auth"] as const)(
-  "cancels during the public %s wrapper handoff",
-  async (resource) => {
-    const f = fixture();
-    const controller = new AbortController();
-    const abort = AbortController.prototype.abort;
-    // The private flow aborts its deadline in finally, immediately before handing off.
-    const cleanup = vi.spyOn(AbortController.prototype, "abort").mockImplementation(function (
-      this: AbortController,
-      reason?: unknown,
-    ) {
-      abort.call(this, reason);
-      if (this !== controller) abort.call(controller);
-    });
-    try {
-      let request: Promise<unknown>;
-      if (resource === "auth") request = readCodexAuthScope(f.registry, controller.signal);
-      else if (resource === "usage")
-        request = fetchCodexUsage(f.registry, controller.signal, f.fetcher);
-      else request = fetchCodexModelCatalog(f.registry, controller.signal, f.fetcher);
-      await expect(request).rejects.toMatchObject({ code: "cancelled" });
-    } finally {
-      cleanup.mockRestore();
-    }
-  },
-);
+it.each([
+  ["usage", fetchCodexUsage],
+  ["catalog", fetchCodexModelCatalog],
+] as const)("cancels during the public %s wrapper handoff", async (_resource, fetchData) => {
+  const f = fixture();
+  const controller = new AbortController();
+  const abort = AbortController.prototype.abort;
+  // The private flow aborts its deadline in finally, immediately before handing off.
+  const cleanup = vi.spyOn(AbortController.prototype, "abort").mockImplementation(function (
+    this: AbortController,
+    reason?: unknown,
+  ) {
+    abort.call(this, reason);
+    if (this !== controller) abort.call(controller);
+  });
+  try {
+    const request = fetchData(f.registry, controller.signal, f.fetcher);
+    await expect(request).rejects.toMatchObject({ code: "cancelled" });
+  } finally {
+    cleanup.mockRestore();
+  }
+});
 
-it("does not resolve auth for an already-cancelled scope read", async () => {
+it("does not resolve auth for an already-cancelled catalog request", async () => {
   const f = fixture();
   const controller = new AbortController();
   controller.abort();
-  await expect(readCodexAuthScope(f.registry, controller.signal)).rejects.toMatchObject({
-    code: "cancelled",
-  });
+  const request = fetchCodexModelCatalog(f.registry, controller.signal, f.fetcher);
+  await expect(request).rejects.toMatchObject({ code: "cancelled" });
   expect(f.registry.getProviderAuth).not.toHaveBeenCalled();
+  expect(f.fetcher).not.toHaveBeenCalled();
 });
 
-it("ignores auth resolving after a scope read is cancelled", async () => {
+it("ignores auth resolving after a catalog request is cancelled", async () => {
   const f = fixture();
   const auth = deferred<AuthResult>();
   f.registry.getProviderAuth.mockReturnValue(auth.promise);
   const controller = new AbortController();
-  const request = readCodexAuthScope(f.registry, controller.signal);
+  const request = fetchCodexModelCatalog(f.registry, controller.signal, f.fetcher);
   controller.abort();
   await expect(request).rejects.toMatchObject({ code: "cancelled" });
   auth.resolve(f.auth);
   await auth.promise;
+  expect(f.fetcher).not.toHaveBeenCalled();
 });
 
-it("bounds auth-only resolution by the same ten-second deadline", async () => {
+it("bounds the catalog's wait for Pi auth by the ten-second deadline", async () => {
   vi.useFakeTimers();
   const f = fixture();
-  f.registry.getProviderAuth.mockReturnValue(new Promise(() => {}));
-  const result = expect(readCodexAuthScope(f.registry)).rejects.toMatchObject({ code: "timeout" });
+  const auth = deferred<AuthResult>();
+  f.registry.getProviderAuth.mockReturnValue(auth.promise);
+  const request = fetchCodexModelCatalog(f.registry, undefined, f.fetcher);
+  const failure = expect(request).rejects.toMatchObject({ code: "timeout" });
   await vi.advanceTimersByTimeAsync(10_000);
-  await result;
-  expect(vi.getTimerCount()).toBe(0);
+  await failure;
+  auth.resolve(f.auth);
+  await auth.promise;
+  expect(f.fetcher).not.toHaveBeenCalled();
+  const timerCount = vi.getTimerCount();
+  expect(timerCount).toBe(0);
 });
 
 it("cancels during handoff of an already-buffered response", async () => {

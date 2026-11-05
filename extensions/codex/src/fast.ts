@@ -235,7 +235,7 @@ export class FastController {
   ): Promise<boolean> {
     const catalog = await this.fetchCatalog(ctx.modelRegistry, preparation.abortController.signal);
     if (!this.canApplyPreparation(ctx, preparation) || !ctx.model) return false;
-    const eligibility = codexFastEligibility(catalog.data, ctx.model.id);
+    const eligibility = codexFastEligibility(catalog, ctx.model.id);
     if (eligibility === "supported") return true;
     const reason =
       eligibility === "unsupported"

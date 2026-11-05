@@ -554,7 +554,6 @@ function installResponseTransports(transport: Transport) {
 
 function createHttpResponses(transport: Transport, payloads: Record<string, unknown>[]) {
   const catalog = vi.fn<typeof fetch>(async () =>
-    // The client wraps this internally as { data, authScope }; the network JSON does not.
     Response.json({ models: [{ slug: "gpt-6-sol", service_tiers: [{ id: "priority" }] }] }),
   );
   const sse = vi.fn<typeof fetch>(async (_url, init) => {

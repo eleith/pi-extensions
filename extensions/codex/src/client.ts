@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { AuthResult, Provider } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -8,8 +7,7 @@ const ACCOUNT_URLS = {
   usage: `${BASE_URL}/wham/usage`,
   catalog: `${BASE_URL}/codex/models?client_version=0.162.0`,
 } as const;
-type NetworkResource = keyof typeof ACCOUNT_URLS;
-type AccountResource = NetworkResource | "auth";
+type AccountResource = keyof typeof ACCOUNT_URLS;
 const TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
@@ -19,13 +17,6 @@ export type CodexAccountRegistry = Pick<
 > & {
   getProvider(id: string): Pick<Provider, "baseUrl" | "getModels"> | undefined;
 };
-
-interface AccountData {
-  data: unknown;
-  authScope: string;
-}
-
-export type CodexModelCatalog = AccountData;
 
 type Failure = "auth" | "unsupported" | "cancelled" | "timeout" | "network" | "response" | "http";
 
@@ -46,28 +37,19 @@ export async function fetchCodexUsage(
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch,
 ): Promise<unknown> {
-  const result = await readAccountData("usage", registry, signal, fetcher);
+  const data = await readAccountData("usage", registry, signal, fetcher);
   if (signal?.aborted) throw new CodexAccountError("cancelled", "Codex account request cancelled.");
-  return result.data;
+  return data;
 }
 
 export async function fetchCodexModelCatalog(
   registry: CodexAccountRegistry,
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch,
-): Promise<CodexModelCatalog> {
-  const result = await readAccountData("catalog", registry, signal, fetcher);
+): Promise<unknown> {
+  const data = await readAccountData("catalog", registry, signal, fetcher);
   if (signal?.aborted) throw new CodexAccountError("cancelled", "Codex account request cancelled.");
-  return result;
-}
-
-export async function readCodexAuthScope(
-  registry: CodexAccountRegistry,
-  signal?: AbortSignal,
-): Promise<string> {
-  const result = await readAccountData("auth", registry, signal);
-  if (signal?.aborted) throw new CodexAccountError("cancelled", "Codex account request cancelled.");
-  return result.authScope;
+  return data;
 }
 
 async function readAccountData(
@@ -75,7 +57,7 @@ async function readAccountData(
   registry: CodexAccountRegistry,
   signal: AbortSignal | undefined,
   fetcher: typeof fetch = fetch,
-): Promise<AccountData> {
+): Promise<unknown> {
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
@@ -83,14 +65,9 @@ async function readAccountData(
     requestSignal.throwIfAborted();
     const headers = await resolveAccountHeaders(registry, requestSignal);
     requestSignal.throwIfAborted();
-    // Hash only the normalized credentials we actually send, never persist raw headers.
-    const authScope = createHash("sha256")
-      .update(JSON.stringify([headers.get("authorization"), headers.get("chatgpt-account-id")]))
-      .digest("hex");
-    if (resource === "auth") return { data: undefined, authScope };
     const data = await requestAccountJson(resource, headers, requestSignal, fetcher);
     requestSignal.throwIfAborted();
-    return { data, authScope };
+    return data;
   } catch (error) {
     if (signal?.aborted)
       throw new CodexAccountError("cancelled", "Codex account request cancelled.");
@@ -194,7 +171,7 @@ function authError(): CodexAccountError {
 }
 
 async function requestAccountJson(
-  resource: NetworkResource,
+  resource: AccountResource,
   headers: Headers,
   requestSignal: AbortSignal,
   fetcher: typeof fetch,

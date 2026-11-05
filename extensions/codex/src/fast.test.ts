@@ -5,11 +5,7 @@ import type {
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-import {
-  CodexAccountError,
-  type CodexModelCatalog,
-  type fetchCodexModelCatalog,
-} from "./client.ts";
+import { CodexAccountError, type fetchCodexModelCatalog } from "./client.ts";
 import { FastController, type FastHost } from "./fast.ts";
 import { FAST_ENTRY, type FastPreference } from "./fast-state.ts";
 import { CONTEXT_ENTRY } from "./state.ts";
@@ -27,9 +23,8 @@ const model: Model<Api> = {
   maxTokens: 128_000,
 };
 const otherModel: Model<Api> = { ...model, id: "gpt-6-astra", name: "Astra" };
-const catalog: CodexModelCatalog = {
-  authScope: "scope-a",
-  data: { models: [{ slug: model.id, service_tiers: [{ id: "default" }, { id: "priority" }] }] },
+const catalog = {
+  models: [{ slug: model.id, service_tiers: [{ id: "default" }, { id: "priority" }] }],
 };
 
 describe("commands and ownership", () => {
@@ -113,7 +108,7 @@ describe("commands and ownership", () => {
   it("persists on only after cost confirmation and matching catalog discovery complete", async () => {
     const fast = createFastControllerFixture();
     const confirmation = deferred<boolean>();
-    const response = deferred<CodexModelCatalog>();
+    const response = deferred<unknown>();
     const started = deferred<void>();
     fast.ctx.ui.confirm.mockReturnValue(confirmation.promise);
     fast.fetchCatalog.mockImplementationOnce(() => {
@@ -134,7 +129,7 @@ describe("commands and ownership", () => {
       fast.ctx.modelRegistry,
       expect.any(AbortSignal),
     );
-    // No separate auth-scope preflight; the account client resolves auth for its one request.
+    // The account client resolves auth for its one request; no separate preflight.
     expect(fast.ctx.modelRegistry.getProviderAuth).not.toHaveBeenCalled();
     expect(fast.appendEntry).not.toHaveBeenCalled();
     expect(fast.controller.transform({ model: model.id }, fast.ctx)).toBeUndefined();
@@ -166,7 +161,7 @@ describe("commands and ownership", () => {
     },
   ])("does not enable without established model support: %j", async ({ data, reason }) => {
     const fast = createFastControllerFixture();
-    fast.fetchCatalog.mockResolvedValue({ ...catalog, data });
+    fast.fetchCatalog.mockResolvedValue(data);
     await fast.controller.handle("on", fast.ctx);
     expect(fast.appendEntry).not.toHaveBeenCalled();
     expect(fast.controller.transform({ model: model.id }, fast.ctx)).toBeUndefined();
@@ -401,7 +396,7 @@ describe("asynchronous enable ownership", () => {
     "discards catalog discovery after the %s changes",
     async (changed) => {
       const fast = createFastControllerFixture();
-      const response = deferred<CodexModelCatalog>();
+      const response = deferred<unknown>();
       const started = deferred<void>();
       fast.fetchCatalog.mockImplementationOnce(() => {
         started.resolve();
@@ -420,7 +415,7 @@ describe("asynchronous enable ownership", () => {
 
   it("aborts invalidated discovery without letting a late result clear a newer operation", async () => {
     const fast = createFastControllerFixture();
-    const oldCatalog = deferred<CodexModelCatalog>();
+    const oldCatalog = deferred<unknown>();
     const oldStarted = deferred<void>();
     fast.fetchCatalog.mockImplementationOnce(() => {
       oldStarted.resolve();
@@ -458,7 +453,7 @@ describe("asynchronous enable ownership", () => {
       for (const outcome of ["resolve", "reject"]) {
         const fast = createFastControllerFixture();
         const confirmation = deferred<boolean>();
-        const response = deferred<CodexModelCatalog>();
+        const response = deferred<unknown>();
         const started = deferred<void>();
         if (stage === "confirmation") fast.ctx.ui.confirm.mockReturnValue(confirmation.promise);
         fast.fetchCatalog.mockImplementationOnce(() => {
