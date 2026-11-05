@@ -1,5 +1,11 @@
 # @eleith-pi/codex
 
+## 0.2.3
+
+### Patch Changes
+
+- 09a0a68: Remove unused Codex auth-scope fingerprinting and the auth-only lookup path. Return catalog JSON directly without unused metadata wrappers, preserving account-request authentication, endpoint restrictions, cancellation, timeouts, response bounds, and safe errors.
+
 ## 0.2.2
 
 ### Patch Changes

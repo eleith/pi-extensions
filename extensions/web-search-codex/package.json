@@ -1,6 +1,6 @@
 {
   "name": "@eleith-pi/web-search-codex",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "description": "One small Codex-native web search tool for Pi",
   "keywords": [

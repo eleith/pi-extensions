@@ -1,5 +1,15 @@
 # @eleith-pi/tool-rendering
 
+## 0.1.6
+
+### Patch Changes
+
+- 0699dc9: Strip terminal escape sequences and non-printing controls from tool-result bodies, edit diffs, legacy listing details, and write-content previews before applying theme styling. Keep stored and model-facing tool data unchanged.
+- bcdcf31: Wrap long expanded tool-result lines with Pi's public ANSI-aware wrapping helper, including code, diffs, and errors. Keep compact clipping, logical counts, and execution-level truncation unchanged. Web-search errors now rely on the shared error-frame wrapping rather than pre-wrapping the same text.
+- 1a0c704: Separate native ls/find limit and byte-truncation notices from filenames when rendering. Keep actionable notices visible as warnings, exclude them from entry/file and hidden counts, and mark byte-truncated results in the summary. Execution, stored results, and legacy display overrides remain unchanged.
+- 40de6af: Honor Pi's `outputPad` setting in shared tool frames using native text padding. Headers, bodies, and footers now align with the configured margins, and wrapping uses the remaining content width. Preserve the 210-column content cap and safely reduce padding in narrow terminals, including the clipping-marker fallback for wide glyphs in one-column content areas.
+- d189083: Use Pi's recorded execution duration for completed and restored bash rows, retaining live elapsed updates and the observed-time fallback when duration metadata is unavailable. Do not fabricate zero durations for final-only rows that were never observed running.
+
 ## 0.1.5
 
 ### Patch Changes
