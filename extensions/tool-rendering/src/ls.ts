@@ -12,7 +12,7 @@ import {
   frameTop,
   resultLabel,
 } from "./frame.ts";
-import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
+import { normalizeLineEndings, sanitizeDisplayText, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
 
 type BuiltinLsTool = ReturnType<typeof createLsToolDefinition>;
@@ -60,7 +60,9 @@ function renderLsResult(
   const status = frameStatus(context);
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
-  const text = normalizeLineEndings(result.details?.rendering?.text ?? textFromResult(result));
+  const rawText = result.details?.rendering?.text ?? textFromResult(result);
+  const sanitizedText = sanitizeDisplayText(rawText);
+  const text = normalizeLineEndings(sanitizedText);
   const lines =
     text.trim() === "(empty directory)"
       ? []

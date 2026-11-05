@@ -11,7 +11,7 @@ import {
   frameTop,
   resultLabel,
 } from "./frame.ts";
-import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
+import { normalizeLineEndings, sanitizeDisplayText, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
 
 type BuiltinWriteTool = ReturnType<typeof createWriteToolDefinition>;
@@ -52,9 +52,10 @@ function renderWriteResult(
   const status = frameStatus(context);
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
-  const rawContent = normalizeLineEndings(context.args.content);
-  const content = rawContent.replace(/\n$/, "");
-  const lines = rawContent ? content.split("\n") : [];
+  const sanitizedContent = sanitizeDisplayText(context.args.content);
+  const normalizedContent = normalizeLineEndings(sanitizedContent);
+  const content = normalizedContent.replace(/\n$/, "");
+  const lines = normalizedContent ? content.split("\n") : [];
   const { shown, hidden } = previewLines(lines, expanded, 10);
   const body = shown
     .map((line, index) => {

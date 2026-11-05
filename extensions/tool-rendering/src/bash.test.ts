@@ -224,6 +224,34 @@ describe("bash renderers", () => {
     expect(text).not.toContain("unused");
   });
 
+  it.each([
+    { isPartial: false, isError: false },
+    { isPartial: true, isError: false },
+    { isPartial: false, isError: true },
+  ])("sanitizes stdout before styling in $isPartial/$isError states", ({ isPartial, isError }) => {
+    const { render } = fixture();
+    const dirty = "\x1b[31mvisible\x1b[0m\x1b]52;c;cHJpdmF0ZQ==\x07\x1b[2J\x00\x85";
+    const output = result(dirty + (isError ? "\n\nCommand exited with code 7" : ""));
+    const original = structuredClone(output);
+    const coloredTheme = {
+      ...theme,
+      fg: (_color: ThemeColor, value: string) => `\x1b[36m${value}\x1b[39m`,
+    } as unknown as typeof theme;
+    const renderContext = context({ isPartial, isError });
+    const component = render(output, { ...collapsed, isPartial }, coloredTheme, renderContext);
+    const rendered = component.render(120).join("\n");
+    expect(rendered).toContain("visible");
+    expect(rendered).toContain("\x1b[36m");
+    for (const control of ["\x1b[31m", "\x1b[0m", "\x1b]", "\x1b[2J", "\x00", "\x85"])
+      expect(rendered).not.toContain(control);
+    expect(rendered).not.toContain("cHJpdmF0ZQ==");
+    if (isError) {
+      expect(rendered).toContain("\x1b[36mvisible\x1b[39m");
+      expect(rendered).toContain("✗ exit 7");
+    }
+    expect(output).toEqual(original);
+  });
+
   it("uses actual painter widths on call/result and terminal resize", () => {
     const { call, render } = fixture();
     const component = call({ command: "echo hello" }, theme, context());

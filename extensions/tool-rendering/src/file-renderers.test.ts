@@ -372,23 +372,81 @@ it.each(names)("colors partial/error %s frames and limits error previews to five
   ).toContain("row-14");
 });
 
+const sanitationCases = names.flatMap((name) => [
+  { name, isError: false },
+  { name, isError: true },
+]);
+it.each(sanitationCases)(
+  "sanitizes $name display bodies (error: $isError) without stripping theme styling",
+  ({ name, isError }) => {
+    const { tool: captured } = capture(name);
+    const tool = erased(captured);
+    const dirty = "\x1b[31mvisible\x1b[0m\x1b]52;c;cHJpdmF0ZQ==\x07\x1b[2J\x00\x85";
+    const contentOverride = name === "write" ? { content: dirty } : {};
+    const args = { ...presets[name].args, ...contentOverride };
+    const result = { content: [{ type: "text" as const, text: dirty }], details: undefined };
+    const original = structuredClone({ args, result });
+    const coloredTheme = {
+      ...minimalTheme,
+      fg: (_color: string, value: string) => `\x1b[36m${value}\x1b[39m`,
+    } as unknown as Theme;
+    const renderContext = context(args, { isError });
+    const component = tool.renderResult!(result, options, coloredTheme, renderContext);
+    const output = text(component);
+    expect(output).toContain("visible");
+    expect(output).toContain("\x1b[36m");
+    if (isError || name === "edit") expect(output).toContain("\x1b[36mvisible\x1b[39m");
+    for (const control of ["\x1b[31m", "\x1b[0m", "\x1b]", "\x1b[2J", "\x00", "\x85"])
+      expect(output).not.toContain(control);
+    expect(output).not.toContain("cHJpdmF0ZQ==");
+    expect({ args, result }).toEqual(original);
+  },
+);
+
 it.each(["ls", "find"] as const)("keeps legacy %s details.rendering.text readable", (name) => {
   const { tool: captured } = capture(name);
   const tool = erased(captured);
   const result = {
     content: [{ type: "text" as const, text: "model-facing text" }],
     details: {
-      rendering: { text: "src/old.ts\nsrc/next.ts" },
+      rendering: { text: "\x1b[31msrc/old.ts\x1b[0m\nsrc/next.ts\x1b]52;c;private\x07" },
       entryLimitReached: 2,
       resultLimitReached: 2,
     },
   };
-  const output = text(tool.renderResult!(result, options, theme, context(presets[name].args)));
+  const original = structuredClone(result);
+  const renderContext = context(presets[name].args);
+  const component = tool.renderResult!(result, options, theme, renderContext);
+  const output = text(component);
+  expect(output).not.toContain("\x1b");
+  expect(result).toEqual(original);
   expect(output).toContain("old.ts");
   expect(output).toContain("next.ts");
   expect(output).not.toContain("model-facing text");
   expect(output).toContain("limit reached");
 });
+
+it.each(["diff", "patch"] as const)(
+  "sanitizes edit details.%s before parsing and styling",
+  (field) => {
+    const { tool: captured } = capture("edit");
+    const tool = erased(captured);
+    const result = {
+      content: [{ type: "text" as const, text: "model-facing fallback" }],
+      details: { [field]: "\x1b[31m+visible\x1b[0m\x1b]52;c;private\x07\x00" },
+    };
+    const original = structuredClone(result);
+    const renderContext = context(presets.edit.args);
+    const component = tool.renderResult!(result, options, theme, renderContext);
+    const output = text(component);
+    expect(output).toContain("+visible");
+    expect(output).toContain("+1 -0");
+    expect(output).not.toContain("model-facing fallback");
+    expect(output).not.toContain("\x1b");
+    expect(output).not.toContain("\x00");
+    expect(result).toEqual(original);
+  },
+);
 
 it("renders an incomplete streamed edit title without throwing", () => {
   const { tool } = capture("edit");

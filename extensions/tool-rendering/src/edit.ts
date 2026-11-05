@@ -12,7 +12,7 @@ import {
   frameTop,
   resultLabel,
 } from "./frame.ts";
-import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
+import { normalizeLineEndings, sanitizeDisplayText, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
 
 type BuiltinEditTool = ReturnType<typeof createEditToolDefinition>;
@@ -53,9 +53,9 @@ function renderEditResult(
   const status = frameStatus(context);
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
-  const diff = normalizeLineEndings(
-    result.details?.diff || result.details?.patch || textFromResult(result),
-  );
+  const rawDiff = result.details?.diff || result.details?.patch || textFromResult(result);
+  const sanitizedDiff = sanitizeDisplayText(rawDiff);
+  const diff = normalizeLineEndings(sanitizedDiff);
   const stats = diffStats(diff);
   const label = `+${stats.added} -${stats.removed}`;
   const lines = diff

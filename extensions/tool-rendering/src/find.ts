@@ -13,7 +13,7 @@ import {
   frameTop,
   resultLabel,
 } from "./frame.ts";
-import { normalizeLineEndings, textFromResult } from "./tool-result.ts";
+import { normalizeLineEndings, sanitizeDisplayText, textFromResult } from "./tool-result.ts";
 import { previewLines } from "./preview.ts";
 
 type BuiltinFindTool = ReturnType<typeof createFindToolDefinition>;
@@ -62,7 +62,9 @@ function renderFindResult(
   const status = frameStatus(context);
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
-  const text = normalizeLineEndings(result.details?.rendering?.text ?? textFromResult(result));
+  const rawText = result.details?.rendering?.text ?? textFromResult(result);
+  const sanitizedText = sanitizeDisplayText(rawText);
+  const text = normalizeLineEndings(sanitizedText);
   const paths =
     text.trim() === "No files found matching pattern"
       ? []
