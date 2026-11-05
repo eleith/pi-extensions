@@ -1,13 +1,11 @@
-import type { FastEligibility } from "./capabilities.ts";
 import type { FastPreference } from "./fast-state.ts";
 
 export type RequestedTier = "priority" | "default";
 export type ObservedTier = RequestedTier | "auto" | "flex" | "fast";
-export type FastRequestPolicy = RequestedTier | "untouched" | "suspended" | "outside scope";
+export type FastRequestPolicy = RequestedTier | "untouched" | "outside scope";
 
 export interface FastStatus {
   preference: FastPreference;
-  eligibility: FastEligibility;
   requestPolicy: FastRequestPolicy;
   lastObserved: ObservedTier | undefined;
   conflict: boolean;
@@ -24,12 +22,6 @@ export function formatFastStatus(status: FastStatus): string {
       break;
     case "priority":
       headline = "Fast: On (priority requested)";
-      break;
-    case "suspended":
-      headline =
-        status.eligibility === "unsupported"
-          ? "Fast: Paused — priority is not available for this model"
-          : "Fast: Paused — model eligibility needs checking";
       break;
     case "outside scope":
       headline = "Fast: Unavailable for this model/provider";

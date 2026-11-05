@@ -36,6 +36,7 @@ type Transport = "sse" | "websocket";
 
 beforeEach(blockUnexpectedNetwork);
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -50,10 +51,11 @@ it.each(["sse", "websocket"] as const)(
     const network = installResponseTransports(transport);
     const { runtime, model, accessToken, credentialWrites, resolveAuth, modelTurns } =
       await createOfflineModelRuntime(transport, network.fetch);
-    const { session, manager, confirm, notify, errors, closeSession } =
+    const { session, manager, confirm, notify, input, beforeStart, errors, closeSession } =
       await openRealExtensionSession(runtime, model);
     try {
       const branch = structuredClone(manager.getBranch());
+      expect(resolveAuth).not.toHaveBeenCalled();
       resolveAuth.mockClear();
       let dashboard: string | undefined;
       for (const command of ["/eleith:codex", "/eleith:codex fast", "/eleith:codex context"]) {
@@ -78,6 +80,8 @@ it.each(["sse", "websocket"] as const)(
 
       await session.prompt("/eleith:codex fast on");
       expect(confirm).toHaveBeenCalledOnce();
+      // Catalog discovery resolves OAuth once; there is no separate auth-scope lookup.
+      expect(resolveAuth).toHaveBeenCalledExactlyOnceWith("openai-codex");
       expect(network.catalog).toHaveBeenCalledOnce();
       expect(network.catalog.mock.calls[0][0]).toBe(CATALOG_URL);
       const headers = new Headers(network.catalog.mock.calls[0][1]?.headers);
@@ -92,10 +96,24 @@ it.each(["sse", "websocket"] as const)(
         "info",
       );
 
+      const enabledBranch = structuredClone(manager.getBranch());
       resolveAuth.mockClear();
+      // Already on is a local no-op, even if discovery has become unavailable.
+      network.catalog.mockRejectedValue(new Error("Catalog must not be consulted after enabling"));
+      await session.prompt("/eleith:codex fast on");
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(network.catalog).toHaveBeenCalledOnce();
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(manager.getBranch()).toEqual(enabledBranch);
+
       await session.prompt("Reply with ok.");
-      // Ordinary input checks the cached catalog's auth scope through Pi resolution only.
-      expect(resolveAuth).toHaveBeenCalledWith("openai-codex");
+      expect(input).toHaveBeenCalledExactlyOnceWith({
+        text: "Reply with ok.",
+        streamingBehavior: undefined,
+        authCalls: 0,
+      });
+      expect(beforeStart).toHaveBeenCalledExactlyOnceWith({ messageType: "user", authCalls: 0 });
+      expectNativeAuthOnly(resolveAuth);
       expect(network.catalog).toHaveBeenCalledOnce();
       expect(modelTurns).toHaveBeenCalledOnce();
       expect(network.payloads).toEqual([
@@ -169,16 +187,19 @@ it("SDK replays the active fast branch alongside context controls, explicit off 
     model,
     manager,
   );
+  // A resumed on preference does not depend on successful catalog discovery.
+  network.catalog.mockRejectedValue(new Error("Resumed preferences must not fetch the catalog"));
   let extendedWindow: number | undefined;
   const outputLimit = session.model?.maxTokens;
   const thinking = session.thinkingLevel;
   try {
     expect(network.fetch).not.toHaveBeenCalled();
+    expect(resolveAuth).not.toHaveBeenCalled();
     const branch = structuredClone(manager.getBranch());
     resolveAuth.mockClear();
     await session.prompt("/eleith:codex fast");
     expect(notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("Fast: Paused — model eligibility needs checking"),
+      expect.stringContaining("Fast: On (priority requested)"),
       "info",
     );
     expect(notify).toHaveBeenLastCalledWith(expect.stringContaining("Context:"), "info");
@@ -195,9 +216,11 @@ it("SDK replays the active fast branch alongside context controls, explicit off 
     expect(session.thinkingLevel).toBe(thinking);
     expect(network.fetch).not.toHaveBeenCalled();
 
-    // No explicit fast command fetched metadata in this resumed session.
+    // Saved on immediately requests priority, without an explicit fast command or discovery.
+    resolveAuth.mockClear();
     await session.prompt("Reply with ok on the resumed branch.");
-    expect(network.catalog).toHaveBeenCalledOnce();
+    expectNativeAuthOnly(resolveAuth);
+    expect(network.catalog).not.toHaveBeenCalled();
     expect(network.payloads[0]).toMatchObject({ model: model.id, service_tier: "priority" });
     expect(fastChoices(manager)).toEqual([saved]);
     expect(confirm).not.toHaveBeenCalled();
@@ -247,7 +270,7 @@ it("SDK replays the active fast branch alongside context controls, explicit off 
     expect(network.payloads).toHaveLength(3);
     expect(legacy.session.getLastAssistantText()).toBe("ok");
     expect(modelTurns).toHaveBeenCalledTimes(3);
-    expect(network.catalog).toHaveBeenCalledOnce();
+    expect(network.catalog).not.toHaveBeenCalled();
     expect(legacy.session.model?.contextWindow).toBe(extendedWindow);
     expect(legacy.session.model?.maxTokens).toBe(outputLimit);
     expect(legacy.session.thinkingLevel).toBe(thinking);
@@ -258,6 +281,250 @@ it("SDK replays the active fast branch alongside context controls, explicit off 
     await legacy.closeSession();
   }
 });
+
+it("SDK discovers eligibility only after confirmation for each explicit transition to on", async () => {
+  const network = installResponseTransports("sse");
+  const { runtime, model, resolveAuth, modelTurns, credentialWrites } =
+    await createOfflineModelRuntime("sse", network.fetch);
+  const f = await openRealExtensionSession(runtime, model);
+  const confirming = deferred();
+  const decision = deferred();
+  let enabling: Promise<void> | undefined;
+  try {
+    f.confirm.mockResolvedValueOnce(false);
+    await f.session.prompt("/eleith:codex fast on");
+    expect(resolveAuth).not.toHaveBeenCalled();
+    expect(network.fetch).not.toHaveBeenCalled();
+    expect(fastChoices(f.manager)).toEqual([]);
+
+    f.confirm.mockImplementationOnce(async () => {
+      confirming.resolve();
+      await decision.promise;
+      return true;
+    });
+    enabling = f.session.prompt("/eleith:codex fast on");
+    await confirming.promise;
+    expect(resolveAuth).not.toHaveBeenCalled();
+    expect(network.fetch).not.toHaveBeenCalled();
+    expect(fastChoices(f.manager)).toEqual([]);
+    decision.resolve();
+    await enabling;
+    expect(resolveAuth).toHaveBeenCalledExactlyOnceWith("openai-codex");
+    expect(network.catalog).toHaveBeenCalledOnce();
+    expect(fastChoices(f.manager)).toEqual([
+      { provider: "openai-codex", modelId: model.id, mode: "on" },
+    ]);
+
+    resolveAuth.mockClear();
+    await f.session.prompt("/eleith:codex fast off");
+    expect(resolveAuth).not.toHaveBeenCalled();
+    expect(network.catalog).toHaveBeenCalledOnce();
+    await f.session.prompt("/eleith:codex fast toggle");
+    expect(f.confirm).toHaveBeenCalledTimes(3);
+    expect(resolveAuth).toHaveBeenCalledExactlyOnceWith("openai-codex");
+    expect(network.catalog).toHaveBeenCalledTimes(2);
+    expect(fastChoices(f.manager)).toEqual([
+      { provider: "openai-codex", modelId: model.id, mode: "on" },
+      { provider: "openai-codex", modelId: model.id, mode: "off" },
+      { provider: "openai-codex", modelId: model.id, mode: "on" },
+    ]);
+    expect(modelTurns).not.toHaveBeenCalled();
+    expect(credentialWrites).not.toHaveBeenCalled();
+    expect(f.errors).toEqual([]);
+  } finally {
+    decision.resolve();
+    await enabling;
+    await f.closeSession();
+  }
+});
+
+it.each(["sse", "websocket"] as const)(
+  "SDK saved priority survives expiry, reload, tree replay and model reselection on %s",
+  async (transport) => {
+    // Fake timeout clocks too: an expiry callback must not silently revoke the saved request.
+    // Microtasks and the provider's other scheduling primitives remain real.
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const network = installResponseTransports(transport);
+    const { runtime, model, resolveAuth, modelTurns, credentialWrites } =
+      await createOfflineModelRuntime(transport, network.fetch);
+    const f = await openRealExtensionSession(runtime, model);
+    try {
+      await f.session.prompt("/eleith:codex fast on");
+      expect(resolveAuth).toHaveBeenCalledExactlyOnceWith("openai-codex");
+      const onLeaf = f.manager.getLeafId()!;
+      const saved = { provider: "openai-codex", modelId: model.id, mode: "on" };
+      network.catalog.mockRejectedValue(new Error("Prompt/lifecycle discovery forbidden"));
+      resolveAuth.mockClear();
+
+      async function statusIsOn() {
+        resolveAuth.mockClear();
+        await f.session.prompt("/eleith:codex fast");
+        expect(f.notify).toHaveBeenLastCalledWith(
+          expect.stringContaining("Fast: On (priority requested)"),
+          "info",
+        );
+        expect(resolveAuth).not.toHaveBeenCalled();
+        expect(network.catalog).toHaveBeenCalledOnce();
+      }
+
+      async function priorityTurn(custom: boolean) {
+        resolveAuth.mockClear();
+        f.input.mockClear();
+        f.beforeStart.mockClear();
+        const turns = modelTurns.mock.calls.length;
+        if (custom) {
+          await f.session.sendCustomMessage(
+            { customType: "fast-sdk", content: "Reply with ok.", display: false },
+            { triggerTurn: true },
+          );
+          expect(f.input).not.toHaveBeenCalled();
+        } else {
+          await f.session.prompt("Reply with ok.");
+          expect(f.input).toHaveBeenCalledExactlyOnceWith({
+            text: "Reply with ok.",
+            streamingBehavior: undefined,
+            authCalls: 0,
+          });
+        }
+        expect(f.beforeStart).toHaveBeenCalledExactlyOnceWith({
+          messageType: custom ? "custom" : "user",
+          authCalls: 0,
+        });
+        expectNativeAuthOnly(resolveAuth);
+        expect(network.catalog).toHaveBeenCalledOnce();
+        expect(modelTurns).toHaveBeenCalledTimes(turns + 1);
+        expect(network.payloads.at(-1)).toMatchObject({
+          model: model.id,
+          service_tier: "priority",
+        });
+        expect(f.session.getLastAssistantText()).toBe("ok");
+      }
+
+      await vi.advanceTimersByTimeAsync(6 * 60_000);
+      await statusIsOn();
+      await priorityTurn(true); // No idle input preparation can rescue an expired request policy.
+
+      resolveAuth.mockClear();
+      await f.session.reload();
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(network.catalog).toHaveBeenCalledOnce();
+      await statusIsOn();
+      await priorityTurn(false);
+
+      await f.session.prompt("/eleith:codex fast off");
+      expect(fastChoices(f.manager)).toEqual([saved, { ...saved, mode: "off" }]);
+      resolveAuth.mockClear();
+      expect(await f.session.navigateTree(onLeaf)).toMatchObject({ cancelled: false });
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(fastChoices(f.manager)).toEqual([saved]);
+      await statusIsOn();
+      await priorityTurn(true); // Tree restoration also works before any ordinary input.
+
+      const other = runtime.getModel("openai-codex", "gpt-6.1-sol");
+      if (!other) throw new Error("Second built-in Codex model missing");
+      resolveAuth.mockClear();
+      await f.session.setModel(other);
+      await f.session.setModel(model);
+      expect(f.modelSelect).toHaveBeenCalledTimes(2); // Exercise real invalidation, not same-ID suppression.
+      expect(resolveAuth).not.toHaveBeenCalled();
+      await statusIsOn();
+      await priorityTurn(true);
+
+      // Also verify idempotence after replay/invalidation, but only AFTER testing the
+      // native requests so an on command cannot accidentally repair their policy.
+      resolveAuth.mockClear();
+      const branch = structuredClone(f.manager.getBranch());
+      await f.session.prompt("/eleith:codex fast on");
+      expect(f.manager.getBranch()).toEqual(branch);
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(network.catalog).toHaveBeenCalledOnce();
+      expect(network.payloads).toHaveLength(4);
+      expect(fastChoices(f.manager)).toEqual([saved]);
+      expect(f.confirm).toHaveBeenCalledOnce();
+      expect(credentialWrites).not.toHaveBeenCalled();
+      expect(f.errors).toEqual([]);
+    } finally {
+      await f.closeSession();
+    }
+  },
+);
+
+it.each(["prompt", "queue"] as const)(
+  "SDK %s steering and follow-up input never adds auth or catalog work while fast is on",
+  async (submission) => {
+    const network = installResponseTransports("sse");
+    const { runtime, model, resolveAuth, modelTurns, credentialWrites } =
+      await createOfflineModelRuntime("sse", network.fetch);
+    const f = await openRealExtensionSession(runtime, model);
+    const started = deferred();
+    const blocked = deferred();
+    let running: Promise<void> | undefined;
+    try {
+      await f.session.prompt("/eleith:codex fast on");
+      network.catalog.mockRejectedValue(new Error("Queued prompts must not discover eligibility"));
+      const respond = network.sse.getMockImplementation()!;
+      network.sse.mockImplementationOnce(async (...args) => {
+        started.resolve();
+        await blocked.promise;
+        return respond(...args);
+      });
+      resolveAuth.mockClear();
+      running = f.session.prompt("Start with ok.");
+      await started.promise;
+      expect(f.session.isStreaming).toBe(true);
+      expectNativeAuthOnly(resolveAuth);
+      expect(f.input).toHaveBeenCalledExactlyOnceWith({
+        text: "Start with ok.",
+        streamingBehavior: undefined,
+        authCalls: 0,
+      });
+      resolveAuth.mockClear();
+      f.input.mockClear();
+
+      if (submission === "prompt") {
+        await f.session.prompt("Steer with ok.", { streamingBehavior: "steer" });
+        await f.session.prompt("Follow with ok.", { streamingBehavior: "followUp" });
+      } else {
+        expect(await f.session.steer("Steer with ok.")).toBe("queued");
+        expect(await f.session.followUp("Follow with ok.")).toBe("queued");
+      }
+      expect(f.input.mock.calls).toEqual([
+        [{ text: "Steer with ok.", streamingBehavior: "steer", authCalls: 0 }],
+        [{ text: "Follow with ok.", streamingBehavior: "followUp", authCalls: 0 }],
+      ]);
+      expect(resolveAuth).not.toHaveBeenCalled();
+      expect(network.catalog).toHaveBeenCalledOnce();
+      expect(modelTurns).toHaveBeenCalledOnce();
+
+      blocked.resolve();
+      await running;
+      await f.session.waitForIdle();
+      expectNativeAuthOnly(resolveAuth);
+      expect(modelTurns).toHaveBeenCalledTimes(3);
+      expect(network.catalog).toHaveBeenCalledOnce();
+      expect(network.payloads).toEqual(
+        Array.from({ length: 3 }, () =>
+          expect.objectContaining({ model: model.id, service_tier: "priority" }),
+        ),
+      );
+      expect(f.confirm).toHaveBeenCalledOnce();
+      expect(credentialWrites).not.toHaveBeenCalled();
+      expect(f.errors).toEqual([]);
+    } finally {
+      blocked.resolve();
+      await running;
+      await f.closeSession();
+    }
+  },
+);
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 // Network policy: globals start closed; the supplied fetch accepts only these two fixed URLs.
 function blockUnexpectedNetwork() {
@@ -410,6 +677,9 @@ async function openRealExtensionSession(
     retry: { enabled: false },
     cacheWarming: "off",
   });
+  const input = vi.fn();
+  const beforeStart = vi.fn();
+  const modelSelect = vi.fn();
   const resourceLoader = new DefaultResourceLoader({
     cwd: directory,
     agentDir: directory,
@@ -419,7 +689,26 @@ async function openRealExtensionSession(
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    extensionFactories: [codex],
+    extensionFactories: [
+      codex,
+      (pi) => {
+        // These handlers run AFTER codex but BEFORE native request authentication.
+        pi.on("input", (event) => {
+          input({
+            text: event.text,
+            streamingBehavior: event.streamingBehavior,
+            authCalls: vi.mocked(runtime.getAuth).mock.calls.length,
+          });
+        });
+        pi.on("before_agent_start", (event) => {
+          beforeStart({
+            messageType: event.messageType,
+            authCalls: vi.mocked(runtime.getAuth).mock.calls.length,
+          });
+        });
+        pi.on("model_select", modelSelect);
+      },
+    ],
   });
   await resourceLoader.reload();
   expect(resourceLoader.getExtensions().errors).toEqual([]);
@@ -447,12 +736,25 @@ async function openRealExtensionSession(
     manager,
     confirm,
     notify,
+    input,
+    beforeStart,
+    modelSelect,
     errors,
     async closeSession() {
       await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
       session.dispose();
     },
   };
+}
+
+// Native provider resolution is essential and uses a model, not the extension's provider lookup.
+function expectNativeAuthOnly(
+  resolveAuth: Awaited<ReturnType<typeof createOfflineModelRuntime>>["resolveAuth"],
+) {
+  expect(resolveAuth).toHaveBeenCalled();
+  for (const [selected] of resolveAuth.mock.calls) {
+    expect(selected).toEqual(expect.objectContaining({ provider: "openai-codex" }));
+  }
 }
 
 function fastChoices(manager: SessionManager) {

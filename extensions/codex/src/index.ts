@@ -63,7 +63,6 @@ export default async function codex(pi: ExtensionAPI): Promise<void> {
   pi.on("input", async (event, ctx) => {
     if (event.streamingBehavior === undefined && ctx.isIdle()) {
       await controller.reconcile(ctx);
-      await fast.prepare(ctx);
     }
   });
   pi.on("before_provider_request", (event, ctx) => fast.transform(event.payload, ctx));

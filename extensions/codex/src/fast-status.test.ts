@@ -11,10 +11,9 @@ it("describes off as a standard request, not an observed processing tier", () =>
   expect(formatFastStatus(fast)).toBe("Fast: Off (standard requested)");
 });
 
-it("describes on as a priority request without claiming priority was delivered", () => {
+it("describes a saved on choice as priority without eligibility state or a reported tier", () => {
   const fast = createFastStatusFixture({
     preference: "on",
-    eligibility: "supported",
     requestPolicy: "priority",
   });
   expect(formatFastStatus(fast).split("\n")).toEqual([
@@ -27,7 +26,6 @@ it("describes on as a priority request without claiming priority was delivered",
 it("keeps next-request priority separate from a reported standard tier", () => {
   const fast = createFastStatusFixture({
     preference: "on",
-    eligibility: "supported",
     requestPolicy: "priority",
     lastObserved: "default",
   });
@@ -51,34 +49,16 @@ it.each<[ObservedTier, string]>([
   );
 });
 
-it("pauses a saved on choice when eligibility needs checking without claiming a current request", () => {
+it("keeps a saved on choice intact outside scope and shows priority again when in scope", () => {
   const fast = createFastStatusFixture({
     preference: "on",
-    requestPolicy: "suspended",
-  });
-  expect(formatFastStatus(fast)).toBe("Fast: Paused — model eligibility needs checking");
-});
-
-it("explains when priority is not available without erasing the saved preference", () => {
-  const fast = createFastStatusFixture({
-    preference: "on",
-    eligibility: "unsupported",
-    requestPolicy: "suspended",
-    lastObserved: "default",
-  });
-  expect(formatFastStatus(fast)).toBe(
-    "Fast: Paused — priority is not available for this model\nLast reported tier: Standard",
-  );
-  expect(fast.preference).toBe("on");
-});
-
-it("gives outside scope precedence over the saved on preference and supported eligibility", () => {
-  const fast = createFastStatusFixture({
-    preference: "on",
-    eligibility: "supported",
     requestPolicy: "outside scope",
   });
   expect(formatFastStatus(fast)).toBe("Fast: Unavailable for this model/provider");
+  expect(fast.preference).toBe("on");
+  expect(formatFastStatus({ ...fast, requestPolicy: "priority" })).toBe(
+    "Fast: On (priority requested)\nNo response tier reported yet.\nPriority requests use more allowance.",
+  );
 });
 
 it.each(["priority", "default"] as const)(
@@ -86,7 +66,6 @@ it.each(["priority", "default"] as const)(
   (requestPolicy) => {
     const fast = createFastStatusFixture({
       preference: requestPolicy === "priority" ? "on" : "off",
-      eligibility: "supported",
       requestPolicy,
       lastObserved: "flex",
       conflict: true,
@@ -111,7 +90,6 @@ it.each(["priority", "default"] as const)(
 function createFastStatusFixture(overrides: Partial<FastStatus> = {}): FastStatus {
   return {
     preference: "inherit",
-    eligibility: "unknown",
     requestPolicy: "untouched",
     lastObserved: undefined,
     conflict: false,

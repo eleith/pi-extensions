@@ -3,13 +3,8 @@ import type {
   ExtensionContext,
   ProviderStreamEvent,
 } from "@earendil-works/pi-coding-agent";
-import {
-  CodexAccountError,
-  fetchCodexModelCatalog,
-  readCodexAuthScope,
-  type CodexAccountRegistry,
-} from "./client.ts";
-import { codexFastEligibility, type FastEligibility } from "./capabilities.ts";
+import { CodexAccountError, fetchCodexModelCatalog, type CodexAccountRegistry } from "./client.ts";
+import { codexFastEligibility } from "./capabilities.ts";
 import {
   FAST_ENTRY,
   readFastPreferences,
@@ -28,8 +23,6 @@ import {
   matchesDirectCodexSelection,
   type DirectCodexHost,
 } from "./request-scope.ts";
-
-const CAPABILITY_TTL_MS = 5 * 60_000;
 
 export interface FastHost extends DirectCodexHost {
   readonly modelRegistry: CodexAccountRegistry &
@@ -55,13 +48,6 @@ interface EligibilityPreparation {
   baseUrl: string;
 }
 
-interface CachedEligibility {
-  modelKey: string;
-  authScope: string;
-  eligibility: FastEligibility;
-  expiresAt: number;
-}
-
 interface ModelTierActivity {
   modelKey: string;
   sessionId: string;
@@ -71,7 +57,6 @@ interface ModelTierActivity {
 
 export class FastController {
   private preferences = new Map<string, FastPreference>();
-  private cachedEligibility: CachedEligibility | undefined;
   private pendingPreparation: EligibilityPreparation | undefined;
   private modelTierActivity: ModelTierActivity | undefined;
   // Honor endpoint Retry-After across model/branch changes; account switching is not supported.
@@ -82,7 +67,6 @@ export class FastController {
     private readonly pi: Pick<ExtensionAPI, "appendEntry">,
     private readonly commandName: string,
     private readonly fetchCatalog: typeof fetchCodexModelCatalog = fetchCodexModelCatalog,
-    private readonly readAuthScope: typeof readCodexAuthScope = readCodexAuthScope,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -106,11 +90,8 @@ export class FastController {
       activity.sessionId !== ctx.sessionManager.getSessionId()
     )
       activity = undefined;
-    let eligibility: FastEligibility = "unknown";
-    if (direct) eligibility = this.currentEligibility(selectedModelKey);
     return {
       preference: this.preferenceFor(selectedModelKey),
-      eligibility,
       requestPolicy: this.requestPolicy(ctx),
       lastObserved: activity?.observed,
       conflict: activity?.conflict ?? false,
@@ -150,6 +131,10 @@ export class FastController {
       this.report(ctx);
       return;
     }
+    if (this.preferenceFor(modelKey(model)) === "on") {
+      this.report(ctx);
+      return;
+    }
     if (!ctx.hasUI) {
       ctx.ui.notify(
         "Enabling fast mode requires interactive confirmation of higher allowance consumption.",
@@ -158,22 +143,6 @@ export class FastController {
       return;
     }
     await this.enable(ctx);
-  }
-
-  // Only ordinary idle input prepares saved on choices. Never fetch from request/stream hooks.
-  async prepare(ctx: FastHost): Promise<void> {
-    if (this.disposed || this.pendingPreparation || !ctx.isIdle()) return;
-    const model = ctx.model;
-    if (!model || this.preferenceFor(modelKey(model)) !== "on" || !isDirectCodexSelection(ctx))
-      return;
-    const preparation = this.startPreparation(ctx);
-    try {
-      await this.refreshEligibility(ctx, preparation, false);
-    } catch (error) {
-      this.reportPreparationFailure(error, ctx, preparation);
-    } finally {
-      if (this.pendingPreparation === preparation) this.pendingPreparation = undefined;
-    }
   }
 
   transform(payload: unknown, ctx: FastHost): Record<string, unknown> | undefined {
@@ -224,7 +193,6 @@ export class FastController {
   invalidate(): void {
     this.pendingPreparation?.abortController.abort();
     this.pendingPreparation = undefined;
-    this.cachedEligibility = undefined;
     this.modelTierActivity = undefined;
   }
 
@@ -236,6 +204,10 @@ export class FastController {
   }
 
   private async enable(ctx: FastHost): Promise<void> {
+    if (this.now() < this.retryAt) {
+      ctx.ui.notify("The catalog service is rate limited. Try fast on again later.", "warning");
+      return;
+    }
     const preparation = this.startPreparation(ctx);
     try {
       const confirmed = await ctx.ui.confirm(
@@ -244,8 +216,8 @@ export class FastController {
         { signal: preparation.abortController.signal },
       );
       if (!this.canApplyPreparation(ctx, preparation) || !confirmed) return;
-      const eligibility = await this.refreshEligibility(ctx, preparation, true);
-      if (!this.canApplyPreparation(ctx, preparation) || eligibility !== "supported") return;
+      const supported = await this.checkEligibility(ctx, preparation);
+      if (!this.canApplyPreparation(ctx, preparation) || !supported) return;
       this.rememberChoice(ctx, "on");
       this.pendingPreparation = undefined;
       this.report(ctx);
@@ -256,57 +228,21 @@ export class FastController {
     }
   }
 
-  private async refreshEligibility(
+  // Discovery belongs only to the explicit enable command, never to prompt submission or replay.
+  private async checkEligibility(
     ctx: FastHost,
     preparation: EligibilityPreparation,
-    force: boolean,
-  ): Promise<FastEligibility | undefined> {
-    const signal = preparation.abortController.signal;
-    const authScope = await this.readAuthScope(ctx.modelRegistry, signal);
-    if (!this.canApplyPreparation(ctx, preparation)) return;
-    const cached = this.cachedEligibility;
-    if (
-      !force &&
-      cached?.modelKey === preparation.modelKey &&
-      cached.authScope === authScope &&
-      cached.expiresAt > this.now()
-    )
-      return cached.eligibility;
-
-    this.cachedEligibility = undefined;
-    this.modelTierActivity = undefined;
-    if (this.now() < this.retryAt) {
-      ctx.ui.notify(
-        "Fast mode suspended: the catalog service is rate limited. Try again later.",
-        "warning",
-      );
-      return;
-    }
-    const catalog = await this.fetchCatalog(ctx.modelRegistry, signal);
-    if (!this.canApplyPreparation(ctx, preparation)) return;
-    if (catalog.authScope !== authScope) {
-      ctx.ui.notify(
-        "Fast mode suspended: authentication changed during discovery. Try fast on again.",
-        "warning",
-      );
-      return;
-    }
-    const model = ctx.model;
-    if (!model) return;
-    const eligibility = codexFastEligibility(catalog.data, model.id);
-    this.cachedEligibility = {
-      modelKey: preparation.modelKey,
-      authScope,
-      eligibility,
-      expiresAt: this.now() + CAPABILITY_TTL_MS,
-    };
-    if (eligibility !== "supported") {
-      ctx.ui.notify(
-        `Fast mode suspended: model eligibility is ${eligibility}. Preference unchanged.`,
-        "warning",
-      );
-    }
-    return eligibility;
+  ): Promise<boolean> {
+    const catalog = await this.fetchCatalog(ctx.modelRegistry, preparation.abortController.signal);
+    if (!this.canApplyPreparation(ctx, preparation) || !ctx.model) return false;
+    const eligibility = codexFastEligibility(catalog.data, ctx.model.id);
+    if (eligibility === "supported") return true;
+    const reason =
+      eligibility === "unsupported"
+        ? "the model does not advertise priority processing"
+        : "the catalog did not establish this model's priority support";
+    ctx.ui.notify(`Could not enable fast mode: ${reason}. Preference unchanged.`, "warning");
+    return false;
   }
 
   private startPreparation(ctx: FastHost): EligibilityPreparation {
@@ -351,14 +287,12 @@ export class FastController {
     preparation: EligibilityPreparation,
   ): void {
     if (!this.canApplyPreparation(ctx, preparation)) return;
-    this.cachedEligibility = undefined;
-    this.modelTierActivity = undefined;
     if (error instanceof CodexAccountError && error.retryAfterMs !== undefined) {
       this.retryAt = this.now() + error.retryAfterMs;
     }
-    let message = "Could not prepare Codex fast mode.";
+    let message = "Could not enable Codex fast mode.";
     if (error instanceof CodexAccountError) message = error.message;
-    ctx.ui.notify(`Fast mode suspended: ${message} Preference unchanged.`, "warning");
+    ctx.ui.notify(`${message} Preference unchanged.`, "warning");
   }
 
   private preferenceFor(selectedModelKey: string): FastPreference {
@@ -377,21 +311,13 @@ export class FastController {
     this.modelTierActivity = undefined;
   }
 
-  private currentEligibility(selectedModelKey: string): FastEligibility {
-    const cached = this.cachedEligibility;
-    if (!cached || cached.modelKey !== selectedModelKey || cached.expiresAt <= this.now())
-      return "unknown";
-    return cached.eligibility;
-  }
-
   private requestPolicy(ctx: FastHost): FastRequestPolicy {
     if (!ctx.model || !isDirectCodexSelection(ctx)) return "outside scope";
     const selectedModelKey = modelKey(ctx.model);
     const preference = this.preferenceFor(selectedModelKey);
     if (preference === "inherit") return "untouched";
     if (preference === "off") return "default";
-    if (this.pendingPreparation || this.currentEligibility(selectedModelKey) !== "supported")
-      return "suspended";
+    // A saved, confirmed choice is durable intent, not an expiring capability lease.
     return "priority";
   }
 

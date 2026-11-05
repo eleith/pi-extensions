@@ -25,7 +25,6 @@ const context: ContextStatus = {
 };
 const inherited: FastStatus = {
   preference: "inherit",
-  eligibility: "unknown",
   requestPolicy: "untouched",
   lastObserved: undefined,
   conflict: false,
@@ -63,7 +62,6 @@ it("does not present requested priority as confirmed server processing", () => {
   const fast: FastStatus = {
     ...inherited,
     preference: "on",
-    eligibility: "supported",
     requestPolicy: "priority",
     lastObserved: "default",
   };
@@ -71,6 +69,21 @@ it("does not present requested priority as confirmed server processing", () => {
   expect(text).toContain("Fast: On (priority requested)\nLast reported tier: Standard");
   expect(text).not.toContain("Last reported tier: Priority");
   expect(text).toContain("Context: 40k / 272k tokens (standard)");
+});
+
+it("shows a saved on choice without needing an eligibility snapshot or a new response", () => {
+  const fast: FastStatus = {
+    ...inherited,
+    preference: "on",
+    requestPolicy: "priority",
+  };
+  const original = structuredClone(fast);
+  const text = formatCodexDashboard(context, fast, "eleith:codex");
+  expect(text).toContain("Fast: On (priority requested)\nNo response tier reported yet.");
+  expect(text).toContain("Priority requests use more allowance.");
+  expect(text).not.toContain("Paused");
+  expect(text).not.toContain("Eligibility:");
+  expect(fast).toEqual(original);
 });
 
 it("keeps the effective context window distinct from the selected model window", () => {
