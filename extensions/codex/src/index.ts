@@ -6,12 +6,14 @@ import { UsageController } from "./usage-controller.ts";
 import { FastController } from "./fast.ts";
 import { CODEX_ACTIONS, completeCodexArguments } from "./commands.ts";
 import { formatCodexDashboard } from "./dashboard.ts";
+import { InspectorController } from "./inspector.ts";
 
 export default async function codex(pi: ExtensionAPI): Promise<void> {
   const settings = await getSettings();
   const commandName = `${settings.commandPrefix}:codex`;
   const controller = new ContextController(pi, commandName);
-  const usage = new UsageController();
+  const inspector = new InspectorController();
+  const usage = new UsageController(inspector);
   const fast = new FastController(pi, commandName);
   let disposed = false;
 
@@ -28,10 +30,12 @@ export default async function codex(pi: ExtensionAPI): Promise<void> {
       if (showStatus) {
         const context = controller.getStatus(ctx);
         const fastStatus = fast.getStatus(ctx);
-        ctx.ui.notify(formatCodexDashboard(context, fastStatus, commandName), "info");
-        return;
+        return inspector.show(ctx, "Overview", {
+          message: formatCodexDashboard(context, fastStatus, commandName),
+        });
       }
       if (action === "usage") return usage.report(ctx);
+      inspector.cancel();
       if (action === "context") return controller.handle(argument ?? "", ctx);
       if (action === "fast") return fast.handle(argument ?? "", ctx);
     },
@@ -42,12 +46,12 @@ export default async function codex(pi: ExtensionAPI): Promise<void> {
     return controller.restore(ctx);
   });
   pi.on("session_tree", (_event, ctx) => {
-    usage.cancel();
+    inspector.cancel();
     fast.restore(ctx);
     return controller.restore(ctx);
   });
   pi.on("model_select", (_event, ctx) => {
-    usage.cancel();
+    inspector.cancel();
     fast.invalidate();
     return controller.modelSelected(ctx);
   });
@@ -56,6 +60,7 @@ export default async function codex(pi: ExtensionAPI): Promise<void> {
     fast.dispose();
     try {
       usage.dispose();
+      inspector.dispose();
     } finally {
       controller.shutdown(ctx);
     }

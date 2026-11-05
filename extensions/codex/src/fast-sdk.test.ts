@@ -727,7 +727,8 @@ async function openRealExtensionSession(
   const notify = vi.fn();
   const errors: unknown[] = [];
   await session.bindExtensions({
-    mode: "tui",
+    // Wire tests use RPC's textual inspection fallback; usage-sdk covers terminal overlays.
+    mode: "rpc",
     uiContext: { notify, confirm } as unknown as ExtensionUIContext,
     onError: (error) => errors.push(error),
   });

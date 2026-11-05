@@ -1,10 +1,15 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+  initTheme,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { afterAll, expect, it, vi } from "vitest";
+import { afterAll, afterEach, expect, it, vi } from "vitest";
 import codex from "./index.ts";
 import { fetchCodexModelCatalog, fetchCodexUsage, readCodexAuthScope } from "./client.ts";
+import { customInteractionUI } from "./custom-interaction.test-helper.ts";
 
 vi.mock("./client.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./client.ts")>()),
@@ -29,7 +34,13 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-async function load(prefix = "eleith") {
+initTheme("dark", false);
+const surfaces: ReturnType<typeof customInteractionUI>[] = [];
+afterEach(() => {
+  for (const surface of surfaces.splice(0)) surface.dispose();
+});
+
+async function load(prefix = "eleith", mode: ExtensionCommandContext["mode"] = "print") {
   vi.mocked(fetchCodexUsage).mockReset();
   vi.mocked(fetchCodexModelCatalog).mockReset();
   vi.mocked(readCodexAuthScope).mockReset();
@@ -55,14 +66,16 @@ async function load(prefix = "eleith") {
     appendEntry: vi.fn(),
   };
   const notify = vi.fn();
+  const surface = customInteractionUI();
+  surfaces.push(surface);
   const ctx = {
-    mode: "print",
+    mode,
     model: undefined,
-    hasUI: false,
+    hasUI: mode === "tui" || mode === "rpc",
     isIdle: () => true,
     getContextUsage: () => undefined,
     modelRegistry: {},
-    ui: { notify, confirm: vi.fn(async () => false) },
+    ui: { notify, confirm: vi.fn(async () => false), custom: surface.custom },
     sessionManager: { getBranch: () => [], getSessionId: () => "session", getLeafId: () => null },
   } as unknown as ExtensionCommandContext;
   await codex(pi as unknown as ExtensionAPI);
@@ -70,6 +83,7 @@ async function load(prefix = "eleith") {
     pi,
     ctx,
     notify,
+    surface,
     async emit(type: string) {
       for (const handler of listeners.get(type) ?? []) await handler({ type }, ctx);
     },
@@ -287,3 +301,114 @@ it("fails invalid prefix settings before registering any capabilities", async ()
   expect(on).not.toHaveBeenCalled();
   expect(registerCommand).not.toHaveBeenCalled();
 });
+
+it("routes every TUI read-only alias to the shared overview inspector, not notifications", async () => {
+  const context = await load("personal", "tui");
+  await context.emit("session_start");
+  for (const [index, input] of ["", "context", "fast"].entries()) {
+    let settled = false;
+    const request = Promise.resolve(context.command().handler(input, context.ctx)).then(() => {
+      settled = true;
+    });
+    await flush();
+    const modal = context.surface.modals[index];
+    expect(modal.lines.join("\n")).toContain("Codex · Overview");
+    expect(modal.lines.join("\n")).toContain("No model selected.");
+    expect(modal.closed).toBe(false);
+    expect(settled).toBe(false);
+    modal.component!.handleInput!(index === 1 ? "\u001b" : "\r");
+    await request;
+    expect(modal.close).toHaveBeenCalledOnce();
+  }
+  expect(context.surface.custom).toHaveBeenCalledTimes(3);
+  expect(context.notify).not.toHaveBeenCalled();
+  expect(fetchCodexUsage).not.toHaveBeenCalled();
+  expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
+  expect(readCodexAuthScope).not.toHaveBeenCalled();
+  expect(context.pi.setModel).not.toHaveBeenCalled();
+  expect(context.pi.appendEntry).not.toHaveBeenCalled();
+  await context.emit("session_shutdown");
+});
+
+it("shares TUI inspector ownership between dashboard aliases and account usage", async () => {
+  const context = await load("personal", "tui");
+  let finish!: (data: unknown) => void;
+  vi.mocked(fetchCodexUsage).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  await context.emit("session_start");
+  const usage = context.command().handler("usage", context.ctx);
+  await flush();
+  const signal = vi.mocked(fetchCodexUsage).mock.calls[0][1]!;
+  const dashboard = context.command().handler("fast", context.ctx);
+  await usage; // Cancels an uncooperative fetch without waiting for its response.
+  await flush();
+  expect(signal.aborted).toBe(true);
+  expect(context.surface.modals[0].closed).toBe(true);
+  expect(context.surface.modals[1].lines.join("\n")).toContain("Codex · Overview");
+  vi.mocked(fetchCodexUsage).mockResolvedValueOnce({ plan_type: "plus" });
+  const nextUsage = context.command().handler("usage", context.ctx);
+  await dashboard;
+  await flush();
+  const modal = context.surface.modals[2];
+  expect(context.surface.modals[1].closed).toBe(true);
+  expect(modal.lines.join("\n")).toContain("Codex · Usage");
+  expect(modal.lines.join("\n")).toContain("Plan: plus");
+  expect(modal.closed).toBe(false);
+  expect(context.surface.focusedComponent).toBe(modal.component);
+  finish({ plan_type: "stale-plan" });
+  await flush();
+  expect(modal.lines.join("\n")).not.toContain("stale-plan");
+  modal.component!.handleInput!("\r");
+  await nextUsage;
+  expect(context.notify).not.toHaveBeenCalled();
+  expect(context.pi.appendEntry).not.toHaveBeenCalled();
+  expect(context.pi.setModel).not.toHaveBeenCalled();
+  await context.emit("session_shutdown");
+});
+
+it.each(["model_select", "session_tree", "session_shutdown"])(
+  "%s cancels a ready TUI overview as well as usage inspectors",
+  async (event) => {
+    const context = await load("eleith", "tui");
+    await context.emit("session_start");
+    const request = context.command().handler("context", context.ctx);
+    await flush();
+    const modal = context.surface.modals[0];
+    expect(modal.closed).toBe(false);
+    await context.emit(event);
+    await request;
+    expect(modal.closed).toBe(true);
+    expect(modal.close).toHaveBeenCalledOnce();
+    expect(context.surface.focusedComponent).toBe(context.surface.mainEditor);
+    expect(context.notify).not.toHaveBeenCalled();
+    if (event !== "session_shutdown") await context.emit("session_shutdown");
+  },
+);
+
+it("keeps TUI mutation feedback and invalid-argument notifications outside inspectors", async () => {
+  const context = await load("eleith", "tui");
+  await context.emit("session_start");
+  await context.command().handler("context on", context.ctx);
+  expect(context.notify).toHaveBeenCalled();
+  context.notify.mockClear();
+  await context.command().handler("fast on", context.ctx);
+  expect(context.notify).toHaveBeenCalled();
+  context.notify.mockClear();
+  await context.command().handler("usage extra", context.ctx);
+  expect(context.notify).toHaveBeenCalledExactlyOnceWith(
+    "Usage: /eleith:codex [context|fast|usage]",
+    "warning",
+  );
+  expect(context.surface.custom).not.toHaveBeenCalled();
+  expect(fetchCodexUsage).not.toHaveBeenCalled();
+  expect(fetchCodexModelCatalog).not.toHaveBeenCalled();
+  expect(context.pi.appendEntry).not.toHaveBeenCalled();
+  await context.emit("session_shutdown");
+});
+
+async function flush() {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}

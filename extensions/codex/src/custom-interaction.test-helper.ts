@@ -2,23 +2,39 @@ import { vi } from "vitest";
 import type {
   BorderedLoader,
   ExtensionUIContext,
-  KeybindingsManager,
+  KeybindingsManager as PiKeybindingsManager,
   Theme,
 } from "@earendil-works/pi-coding-agent";
+import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 
 type Tui = ConstructorParameters<typeof BorderedLoader>[0];
 type UIComponent = Awaited<ReturnType<Parameters<ExtensionUIContext["custom"]>[0]>>;
 type CustomFactory<T> = (
   tui: Tui,
   theme: Theme,
-  kb: KeybindingsManager,
+  kb: PiKeybindingsManager,
   done: (result: T) => void,
 ) => UIComponent | Promise<UIComponent>;
 
 // The public custom-interaction lifecycle, without starting a terminal. Model Pi 1.3's
 // shared editor restoration (not 1.4's dialog stack), so unsafe non-overlay closes
 // really can steal focus from a newer interaction. Overlay removal owns only its entry.
-export function customInteractionUI() {
+export function customInteractionUI(
+  options: {
+    rows?: number;
+    columns?: number;
+    keybindings?: KeybindingsManager;
+    theme?: Theme;
+  } = {},
+) {
+  const terminal = { rows: options.rows ?? 40, columns: options.columns ?? 100 };
+  const keybindings = options.keybindings ?? new KeybindingsManager(TUI_KEYBINDINGS);
+  const theme =
+    options.theme ??
+    ({
+      fg: (_color: string, text: string) => text,
+      bold: (text: string) => text,
+    } as Theme);
   const mainEditor: UIComponent = { render: () => ["editor"], invalidate() {} };
   let editorComponent = mainEditor;
   let focusedComponent = mainEditor;
@@ -27,11 +43,20 @@ export function customInteractionUI() {
   const modals: {
     component?: UIComponent;
     lines: string[];
+    renders: string[][];
     closed: boolean;
     adopted: boolean;
     close: ReturnType<typeof vi.fn<(result?: unknown) => void>>;
     requestRender: ReturnType<typeof vi.fn<() => void>>;
   }[] = [];
+
+  requestRender.mockImplementation(() => {
+    for (const modal of modals) {
+      if (!modal.adopted || modal.closed || !modal.component) continue;
+      modal.lines = modal.component.render(terminal.columns);
+      modal.renders.push([...modal.lines]);
+    }
+  });
 
   const restoreEditor = () => {
     editorComponent = mainEditor;
@@ -58,6 +83,7 @@ export function customInteractionUI() {
         const modal = {
           component: undefined as UIComponent | undefined,
           lines: [] as string[],
+          renders: [] as string[][],
           closed: false,
           adopted: false,
           close: vi.fn(),
@@ -75,9 +101,9 @@ export function customInteractionUI() {
         modals.push(modal);
         Promise.resolve(
           factory(
-            { requestRender: modal.requestRender } as unknown as Tui,
-            { fg: (_color: string, text: string) => text } as Theme,
-            {} as KeybindingsManager,
+            { requestRender: modal.requestRender, terminal } as unknown as Tui,
+            theme,
+            keybindings as PiKeybindingsManager,
             modal.close,
           ),
         )
@@ -94,7 +120,6 @@ export function customInteractionUI() {
               editorComponent = component;
             }
             focusedComponent = component;
-            modal.lines = component.render(80);
             requestRender();
           })
           .catch((error: unknown) => {
@@ -109,6 +134,8 @@ export function customInteractionUI() {
     // Vitest erases the generic call signature; the implementation preserves it.
     custom: custom as ExtensionUIContext["custom"] & typeof custom,
     modals,
+    terminal,
+    keybindings,
     requestRender,
     mainEditor,
     get editorComponent() {
