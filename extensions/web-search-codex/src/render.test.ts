@@ -30,6 +30,8 @@ function context(patch: Partial<ToolRenderContext> = {}): ToolRenderContext {
     isError: false,
     durationMs: undefined,
     outputPad: 0,
+    keyText: () => "",
+    keyHint: (_key: string, description: string) => description,
     ...patch,
   };
 }

@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCommand } from "@eleith/pi-internal/commands";
 import { getSettings } from "@eleith/pi-internal/config";

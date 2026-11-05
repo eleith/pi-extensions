@@ -22,6 +22,8 @@ function context(overrides: Partial<Context> = {}): Context {
     isError: false,
     durationMs: undefined,
     outputPad: 0,
+    keyText: () => "",
+    keyHint: (_key: string, description: string) => description,
     ...overrides,
   };
 }

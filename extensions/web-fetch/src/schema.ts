@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { LIMITS } from "./core/limits.ts";
 import { FORMATS, type FetchInput } from "./core/types.ts";
 import { checkFetchInput } from "./core/input.ts";

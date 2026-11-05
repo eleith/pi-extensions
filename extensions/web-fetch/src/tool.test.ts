@@ -1,4 +1,5 @@
-import { Type, validateToolArguments, type TSchema, type JsonValue } from "@earendil-works/pi-ai";
+import { validateToolArguments, type JsonValue } from "@earendil-works/pi-ai";
+import { Type, type TSchema } from "typebox";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { BatchResult, ContentResult, FetchHooks, FetchResult } from "./core/types.ts";
 import { batchOutputSchema, fetchOutputSchema } from "./schema.ts";

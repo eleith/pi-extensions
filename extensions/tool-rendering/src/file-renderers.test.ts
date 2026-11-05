@@ -120,6 +120,8 @@ function context<A>(args: A, patch: Partial<Omit<ReadContext, "args">> = {}) {
     isError: false,
     durationMs: undefined,
     outputPad: 0,
+    keyText: () => "",
+    keyHint: (_key: string, description: string) => description,
     ...patch,
   };
 }
