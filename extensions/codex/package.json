@@ -1,6 +1,6 @@
 {
   "name": "@eleith-pi/codex",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": false,
   "description": "Context windows, account usage, and fast-mode controls for Codex in Pi",
   "keywords": [

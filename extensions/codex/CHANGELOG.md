@@ -1,5 +1,12 @@
 # @eleith-pi/codex
 
+## 0.2.2
+
+### Patch Changes
+
+- 8281f21: Keep saved fast-mode choices active without expiry across reloads, tree navigation, and model reselection. Check eligibility only when explicitly enabling fast mode, avoiding fast-mode authentication and catalog preparation on prompts while preserving scope checks and requested-versus-reported tier status.
+- 0923c70: Show the Codex overview and account usage in a consistent, titled terminal inspector with native borders and keybinding-aware footers. Keep loading, results, and errors in one dismissible overlay without transcript notifications, support scrolling for longer reports, and preserve textual feedback outside the terminal UI.
+
 ## 0.2.1
 
 ### Patch Changes
