@@ -68,20 +68,18 @@ function renderGrepResult(
       expanded,
       3,
     );
-    return frameResultWithBottomLabel(
-      shown.join("\n"),
-      resultLabel(empty ? `0 matches${limit}${truncated}` : "output", expanded, hidden, theme),
-      status,
-      theme,
-      width,
-    );
+    const body = shown.join("\n");
+    const summary = empty ? `0 matches${limit}${truncated}` : "output";
+    const label = resultLabel(summary, expanded, hidden, theme);
+    return frameResultWithBottomLabel(body, label, status, theme, width, expanded);
   }
 
   // Three matches across three files use at most eight grouped lines (headings and spacing included).
   // Context and truncation notices remain available when expanded, but cannot grow the preview.
   const shown = expanded ? lines : matches.slice(0, 3);
+  const displayText = shown.join("\n");
   const rendered = renderGroupedMatches(
-    shown.join("\n"),
+    displayText,
     context.args.pattern,
     context.args.literal ?? false,
     context.args.ignoreCase ?? false,
@@ -89,13 +87,8 @@ function renderGrepResult(
   );
   const hidden = expanded ? 0 : lines.length - shown.length;
   const summary = `${matches.length} ${matches.length === 1 ? "match" : "matches"}${limit}${truncated}`;
-  return frameResultWithBottomLabel(
-    rendered,
-    resultLabel(summary, expanded, hidden, theme),
-    status,
-    theme,
-    width,
-  );
+  const label = resultLabel(summary, expanded, hidden, theme);
+  return frameResultWithBottomLabel(rendered, label, status, theme, width, expanded);
 }
 
 function renderGroupedMatches(

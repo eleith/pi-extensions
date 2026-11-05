@@ -5,6 +5,7 @@ import {
   frameComponent,
   frameTop,
   frameBottomWithLabel,
+  frameResultWithBottomLabel,
   frameToolError,
   frameStatus,
   resultLabel,
@@ -123,6 +124,93 @@ it("errors take precedence over partial state, and collapsed errors show five li
   expect(collapsed).not.toContain("error5");
   expect(collapsed).toContain("2 hidden");
   expect(stripTerminalSequences(frameToolError(message, true, theme, 80))).toContain("error6");
+});
+
+it("clips bodies by default but wraps all expanded text, preserving styles and the frame cap", () => {
+  const payload = "界🙂éabcdef".repeat(45);
+  const body = theme.fg("toolOutput", payload);
+  const compact = frameResultWithBottomLabel(body, "collapsed", "success", theme, 20);
+  const compactLines = compact.split("\n");
+  expect(compactLines).toHaveLength(2);
+  const compactBody = stripTerminalSequences(compactLines[0]);
+  expect(compactBody).toContain("…");
+  const explicitlyCollapsed = frameResultWithBottomLabel(
+    body,
+    "collapsed",
+    "success",
+    theme,
+    20,
+    false,
+  );
+  expect(explicitlyCollapsed).toBe(compact);
+
+  const component = frameComponent({ lastComponent: undefined }, (width) =>
+    frameResultWithBottomLabel(body, "expanded", "success", theme, width, true),
+  );
+  for (const width of [2, 5, 20, 80, 250, 20]) {
+    const lines = component.render(width);
+    const content = lines.slice(0, -1);
+    const unstyled = content.map((line) => stripTerminalSequences(line));
+    const restored = unstyled.map((line) => line.trimEnd()).join("");
+    expect(restored).toBe(payload);
+    const cap = Math.min(width, 210);
+    for (const line of lines) {
+      const plain = stripTerminalSequences(line);
+      const unpadded = plain.trimEnd();
+      const columns = visibleWidth(unpadded);
+      expect(columns).toBeLessThanOrEqual(cap);
+    }
+    for (const line of content) expect(line).toContain("\x1b[36m");
+    const repeated = component.render(width);
+    expect(repeated).toBe(lines);
+  }
+});
+
+it("retains narrow glyphs and marks wide glyphs that cannot fit in one column", () => {
+  const body = theme.fg("toolOutput", "A界é🙂Z");
+  const component = frameComponent({ lastComponent: undefined }, (width) =>
+    frameResultWithBottomLabel(body, "expanded", "success", theme, width, true),
+  );
+  const narrow = component.render(1);
+  const content = narrow.slice(0, -1);
+  const plain = content.map((line) => stripTerminalSequences(line));
+  const restored = plain.map((line) => line.trimEnd()).join("");
+  expect(restored).toBe("A…é…Z");
+  for (const line of narrow) {
+    const columns = visibleWidth(line);
+    expect(columns).toBeLessThanOrEqual(1);
+  }
+});
+
+it("preserves explicit blank lines when wrapping an expanded body", () => {
+  const body = "first\n\nlast\n";
+  const frame = frameResultWithBottomLabel(body, "expanded", "success", theme, 40, true);
+  const lines = frame.split("\n");
+  const content = lines.slice(0, -1);
+  const restored = content.join("\n");
+  expect(restored).toBe(body);
+  expect(lines).toHaveLength(5);
+});
+
+it("wraps expanded errors while counting hidden logical lines in compact errors", () => {
+  const first = "failure".repeat(40);
+  const message = `${first}\nsecond\nthird\nfourth\nfifth\nsixth\nseventh`;
+  const compact = frameToolError(message, false, theme, 80);
+  const compactLines = compact.split("\n");
+  expect(compactLines).toHaveLength(6);
+  const compactText = stripTerminalSequences(compact);
+  expect(compactText).toContain("2 hidden");
+  const expanded = frameToolError(message, true, theme, 40);
+  const expandedLines = expanded.split("\n");
+  const content = expandedLines.slice(0, -1);
+  const restored = content.map((line) => stripTerminalSequences(line)).join("");
+  const expected = message.replace(/\n/g, "");
+  expect(restored).toBe(expected);
+  for (const line of content) expect(line).toContain("\x1b[36m");
+  const footer = expandedLines.at(-1)!;
+  const plainFooter = stripTerminalSequences(footer);
+  expect(plainFooter).toContain("✗ error · expanded");
+  expect(plainFooter).not.toContain("hidden");
 });
 
 it("records hidden lines without adding a notice to expanded output", () => {

@@ -63,11 +63,7 @@ function renderWriteResult(
       return `${theme.fg("dim", number)} ${theme.fg("borderMuted", "│")} ${line}`;
     })
     .join("\n");
-  return frameResultWithBottomLabel(
-    body,
-    resultLabel(`${lines.length} lines`, expanded, hidden, theme),
-    status,
-    theme,
-    width,
-  );
+  const summary = `${lines.length} lines`;
+  const label = resultLabel(summary, expanded, hidden, theme);
+  return frameResultWithBottomLabel(body, label, status, theme, width, expanded);
 }

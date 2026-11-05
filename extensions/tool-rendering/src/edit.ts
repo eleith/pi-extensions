@@ -57,19 +57,15 @@ function renderEditResult(
   const sanitizedDiff = sanitizeDisplayText(rawDiff);
   const diff = normalizeLineEndings(sanitizedDiff);
   const stats = diffStats(diff);
-  const label = `+${stats.added} -${stats.removed}`;
+  const summary = `+${stats.added} -${stats.removed}`;
   const lines = diff
     .replace(/\n$/, "")
     .split("\n")
     .filter((line) => line && !line.startsWith("***"));
   const { shown, hidden } = previewLines(lines, expanded, 8);
-  return frameResultWithBottomLabel(
-    renderDiff(shown, theme),
-    resultLabel(label, expanded, hidden, theme),
-    status,
-    theme,
-    width,
-  );
+  const body = renderDiff(shown, theme);
+  const label = resultLabel(summary, expanded, hidden, theme);
+  return frameResultWithBottomLabel(body, label, status, theme, width, expanded);
 }
 
 function renderDiff(lines: string[], theme: EditTheme): string {

@@ -91,7 +91,7 @@ function renderLsResult(
   const truncated = truncation?.truncated ? " · truncated" : "";
   const summary = `${lines.length} entries${limit}${truncated}`;
   const label = resultLabel(summary, expanded, hidden, theme);
-  return frameResultWithBottomLabel(body, label, status, theme, width);
+  return frameResultWithBottomLabel(body, label, status, theme, width, expanded);
 }
 
 function renderEntries(lines: string[], theme: LsTheme): string {

@@ -33,11 +33,10 @@ export function buildSearchRendering(): Required<ToolRenderers> {
         const text = resultText(result.content);
         const queryLines = queryBlock(queryText(context.args), theme, width);
         if (context.isError || metadata?.status === "error") {
-          const message = options.expanded ? wrapTextWithAnsi(text, width).join("\n") : text;
-          return [
-            ...queryLines,
-            frameToolError(message, options.expanded, theme, width, { showHidden: false }),
-          ].join("\n");
+          const error = frameToolError(text, options.expanded, theme, width, {
+            showHidden: false,
+          });
+          return [...queryLines, error].join("\n");
         }
 
         const partial = options.isPartial || context.isPartial;

@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import * as agent from "@earendil-works/pi-coding-agent";
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildBashRendering } from "./bash.ts";
 import { FramedText } from "./frame.ts";
@@ -146,6 +146,59 @@ describe("bash renderers", () => {
     ).toEqual(["one", "two", "three", "four", "five", "six", "seven"]);
     expect(expanded.render(100).at(-1)).toContain("✓ exit 0 · expanded");
   });
+
+  it.each([
+    { isError: false, isPartial: false, summary: "✓ exit 0" },
+    { isError: false, isPartial: true, summary: "running" },
+    { isError: true, isPartial: false, summary: "✗ exit 7" },
+  ])(
+    "wraps full expanded bash output (error=$isError, partial=$isPartial)",
+    ({ isError, isPartial, summary }) => {
+      const { render } = fixture();
+      const payload = "abcdefghij".repeat(25) + "TAIL";
+      const sourceLines = Array.from({ length: 7 }, (_, index) => `${index + 1}:${payload}`);
+      const body = sourceLines.join("\n");
+      const raw = isError ? `${body}\n\nCommand exited with code 7` : body;
+      const output = result(raw);
+      const original = structuredClone(output);
+      const ctx = context({ isError, isPartial });
+      const compactOptions = { expanded: false, isPartial };
+      const compact = render(output, compactOptions, theme, ctx);
+      const compactLines = compact.render(100);
+      expect(compactLines).toHaveLength(6);
+      const compactFooter = compactLines.at(-1)!;
+      expect(compactFooter).toContain(`${summary} · collapsed · 2 hidden`);
+      const compactText = compactLines.join("\n");
+      expect(compactText).not.toContain("TAIL");
+      const expandedOptions = { expanded: true, isPartial };
+      const expandedContext = { ...ctx, expanded: true, lastComponent: compact };
+      const expanded = render(output, expandedOptions, theme, expandedContext);
+      expect(expanded).toBe(compact);
+      const expected = sourceLines.join("");
+      for (const width of [1, 5, 40, 100, 250, 40]) {
+        const rendered = expanded.render(width);
+        const content = rendered.slice(0, -1);
+        const plain = content.map((line) => stripTerminalSequences(line));
+        const restored = plain.map((line) => line.trimEnd()).join("");
+        expect(restored).toBe(expected);
+        for (const line of rendered) {
+          const columns = visibleWidth(line);
+          expect(columns).toBeLessThanOrEqual(width);
+        }
+        if (width >= 100) {
+          const footer = rendered.at(-1)!;
+          expect(footer).toContain(`${summary} · expanded`);
+          expect(footer).not.toContain("hidden");
+        }
+      }
+      const restoredContext = { ...ctx, lastComponent: expanded };
+      const collapsedAgain = render(output, compactOptions, theme, restoredContext);
+      const restoredLines = collapsedAgain.render(100);
+      const restoredText = restoredLines.join("\n");
+      expect(restoredText).toBe(compactText);
+      expect(output).toEqual(original);
+    },
+  );
 
   it.each(["Command exited with code 9", "Command timed out after 10 seconds", "Command aborted"])(
     "preserves status-looking stdout in success and partial: %s",

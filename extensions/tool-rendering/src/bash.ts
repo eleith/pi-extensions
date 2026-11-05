@@ -95,7 +95,7 @@ function renderBashResult(
     : bashSummaryLabel(parsed, theme) || (context.isError ? theme.fg("error", "✗ error") : "");
   const summary = [duration, runStatus].filter(Boolean).join(theme.fg("dim", " · "));
   const label = resultLabel(summary, options.expanded, hidden, theme);
-  return frameResultWithBottomLabel(output, label, status, theme, width);
+  return frameResultWithBottomLabel(output, label, status, theme, width, options.expanded);
 }
 
 interface ParsedBashOutput {

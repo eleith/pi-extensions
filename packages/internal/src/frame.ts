@@ -1,5 +1,11 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import {
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+} from "@earendil-works/pi-tui";
 
 export class FramedText extends Text {
   private painter: (width: number) => string = () => "";
@@ -98,15 +104,18 @@ export function frameBottomWithLabel(
   return `${border("─".repeat(fillWidth))} ${fittedLabel} ${border("─".repeat(trailingBorderWidth))}`;
 }
 
+/** Clip compact bodies; wrap expanded bodies without changing the summary label. */
 export function frameResultWithBottomLabel(
   body: string,
   label: string,
   status: FrameStatus,
   theme: Theme,
   width: number,
+  expanded = false,
 ): string {
-  const lines = body ? frameBody(body, width) : [];
-  return [...lines, frameBottomWithLabel(label, status, theme, width)].join("\n");
+  const lines = body ? frameBody(body, width, expanded) : [];
+  const footer = frameBottomWithLabel(label, status, theme, width);
+  return [...lines, footer].join("\n");
 }
 
 /** Keep presentation state in the frame, separate from tool output. */
@@ -133,18 +142,12 @@ export function frameToolError(
   const lines = (message || "Error").replace(/\r?\n$/, "").split("\n");
   const shown = expanded ? lines : lines.slice(0, 5);
   const hidden = lines.length - shown.length;
-  return frameResultWithBottomLabel(
-    theme.fg("error", shown.join("\n")),
-    resultLabel(
-      theme.fg("error", "✗ error"),
-      expanded,
-      options.showHidden === false ? 0 : hidden,
-      theme,
-    ),
-    "error",
-    theme,
-    width,
-  );
+  const messageBody = shown.join("\n");
+  const body = theme.fg("error", messageBody);
+  const summary = theme.fg("error", "✗ error");
+  const hiddenCount = options.showHidden === false ? 0 : hidden;
+  const label = resultLabel(summary, expanded, hiddenCount, theme);
+  return frameResultWithBottomLabel(body, label, "error", theme, width, expanded);
 }
 
 export function formatDuration(ms: number): string {
@@ -158,8 +161,11 @@ export function formatDuration(ms: number): string {
   return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
 }
 
-function frameBody(body: string, width: number): string[] {
-  return body.split("\n").map((line) => truncateToWidth(line, Math.max(1, width), "…"));
+function frameBody(body: string, width: number, expanded: boolean): string[] {
+  const safeWidth = Math.max(1, width);
+  const lines = expanded ? wrapTextWithAnsi(body, safeWidth) : body.split("\n");
+  // A wide grapheme cannot fit in one column, even after native wrapping.
+  return lines.map((line) => truncateToWidth(line, safeWidth, "…"));
 }
 
 function borderPainter(status: FrameStatus, theme: Theme): (text: string) => string {

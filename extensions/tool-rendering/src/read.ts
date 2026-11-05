@@ -63,13 +63,8 @@ function renderReadResult(
   if (context.isError) return frameToolError(textFromResult(result), expanded, theme, width);
 
   if (result.content.some((item) => item.type === "image")) {
-    return frameResultWithBottomLabel(
-      "",
-      resultLabel("image", expanded, 0, theme),
-      status,
-      theme,
-      width,
-    );
+    const label = resultLabel("image", expanded, 0, theme);
+    return frameResultWithBottomLabel("", label, status, theme, width, expanded);
   }
   const rawText = normalizeLineEndings(textFromResult(result));
   const text = rawText.replace(/\n$/, "");
@@ -77,14 +72,10 @@ function renderReadResult(
   const { shown, hidden } = previewLines(lines, expanded, 10);
   const truncation = result.details?.truncation ? " · truncated" : "";
   const summary = `${lines.length} lines${truncation}`;
-  const body = renderNumberedLines(shown, positiveInteger(context.args.offset) ?? 1, theme);
-  return frameResultWithBottomLabel(
-    body,
-    resultLabel(summary, expanded, hidden, theme),
-    status,
-    theme,
-    width,
-  );
+  const offset = positiveInteger(context.args.offset) ?? 1;
+  const body = renderNumberedLines(shown, offset, theme);
+  const label = resultLabel(summary, expanded, hidden, theme);
+  return frameResultWithBottomLabel(body, label, status, theme, width, expanded);
 }
 
 function renderNumberedLines(lines: string[], offset: number, theme: ReadTheme): string {

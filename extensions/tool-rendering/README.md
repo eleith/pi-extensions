@@ -29,6 +29,10 @@ and model-facing results remain unchanged. old sessions' display details still w
 frames target these seven tool names; custom tools with the same names may have
 output formats that do not match the summaries. hide the frames to use their own rendering.
 
+collapsed result previews clip long lines; expanded results wrap them to reveal all
+available text, including code, diffs, and errors. counts describe logical lines,
+files, or matches rather than wrapped screen rows.
+
 the working label counts model time, not time spent running tools.
 
 ## how to configure

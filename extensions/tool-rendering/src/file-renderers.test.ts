@@ -10,7 +10,7 @@ import {
   type Theme,
   type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { afterAll, expect, it, vi } from "vitest";
 import { buildReadRendering } from "./read.ts";
 import { buildWriteRendering } from "./write.ts";
@@ -223,6 +223,132 @@ it.each(names)("keeps bounded collapsed %s previews and full expanded content", 
       ls: "row-14",
     }[name],
   );
+});
+
+it.each(names)(
+  "wraps expanded %s bodies without changing logical counts or compact clipping",
+  (name) => {
+    const captured = capture(name);
+    const tool = erased(captured.tool);
+    const payload = "abcdefghij".repeat(15) + "TAIL";
+    const written = `${payload}\nsecond`;
+    const contents: Record<Name, string> = {
+      read: written,
+      write: "written",
+      edit: `+${payload}\n-${payload}`,
+      grep: `src/a.ts:1:${payload}\nsrc/b.ts:2:second`,
+      find: `src/${payload}.ts\nsrc/second.ts`,
+      ls: written,
+    };
+    const expectedBodies: Record<Name, string> = {
+      read: `995 │ ${payload}\n996 │ second`,
+      write: `  1 │ ${payload}\n  2 │ second`,
+      edit: `+${payload}\n-${payload}`,
+      grep: `src/a.ts\n    1 │ ${payload}\n\nsrc/b.ts\n    2 │ second`,
+      find: `src/\n  ├── ${payload}.ts\n  └── second.ts`,
+      ls: `├── ${payload}\n└── second`,
+    };
+    const summaries: Record<Name, string> = {
+      read: "2 lines",
+      write: "2 lines",
+      edit: "+1 -1",
+      grep: "2 matches",
+      find: "2 files",
+      ls: "2 entries",
+    };
+    const args = { ...presets[name].args, content: written };
+    const result = {
+      content: [{ type: "text" as const, text: contents[name] }],
+      details: name === "edit" ? { diff: contents.edit } : undefined,
+    };
+    const original = structuredClone({ args, result });
+    const ctx = context(args);
+    const compact = tool.renderResult!(result, options, theme, ctx);
+    const compactLines = compact.render(40);
+    const compactText = compactLines.join("\n");
+    const expectedLines = expectedBodies[name].split("\n");
+    expect(compactLines).toHaveLength(expectedLines.length + 1);
+    expect(compactText).not.toContain("TAIL");
+    expect(compactText).toContain("…");
+    const expandedOptions = { ...options, expanded: true };
+    const expandedContext = { ...ctx, lastComponent: compact, expanded: true };
+    const expanded = tool.renderResult!(result, expandedOptions, theme, expandedContext);
+    expect(expanded).toBe(compact);
+    const expected = expectedBodies[name].replace(/\s+/g, "");
+    for (const width of [8, 40, 80, 250, 40]) {
+      const rendered = expanded.render(width);
+      const body = rendered.slice(0, -1);
+      const plain = body.map((line) => stripTerminalSequences(line));
+      const restored = plain.join("").replace(/\s+/g, "");
+      expect(restored).toBe(expected);
+      for (const line of rendered) {
+        const columns = visibleWidth(line);
+        expect(columns).toBeLessThanOrEqual(width);
+      }
+      if (width >= 80) {
+        const footer = rendered.at(-1)!;
+        expect(footer).toContain(`${summaries[name]} · expanded`);
+        expect(footer).not.toContain("hidden");
+      }
+    }
+    const restoredContext = { ...ctx, lastComponent: expanded };
+    const collapsedAgain = tool.renderResult!(result, options, theme, restoredContext);
+    const restoredLines = collapsedAgain.render(40);
+    const restoredText = restoredLines.join("\n");
+    expect(restoredText).toBe(compactText);
+    expect({ args, result }).toEqual(original);
+  },
+);
+
+it("preserves code indentation and token spacing while wrapping expanded write content", () => {
+  const { tool } = capture("write");
+  const source = '    const message = "hello world";\n    return message + "!";';
+  const args = { path: "example.ts", content: source };
+  const result = { content: [{ type: "text" as const, text: "written" }], details: undefined };
+  const ctx = context(args, { expanded: true });
+  const expandedOptions = { ...options, expanded: true };
+  const component = tool.renderResult!(result, expandedOptions, theme, ctx);
+  const rendered = component.render(32);
+  const content = rendered.slice(0, -1);
+  const plain = content.map((line) => stripTerminalSequences(line));
+  const actual = plain.map((line) => line.trimEnd());
+  expect(actual).toEqual([
+    '  1 │     const message = "hello',
+    'world";',
+    '  2 │     return message + "!";',
+  ]);
+  const footer = rendered.at(-1)!;
+  expect(footer).toContain("2 lines · expanded");
+});
+
+it.each(names)("wraps expanded %s errors and retains logical hidden counts", (name) => {
+  const captured = capture(name);
+  const tool = erased(captured.tool);
+  const payload = "failure".repeat(40);
+  const message = `${payload}\nsecond\nthird\nfourth\nfifth\nsixth\nseventh`;
+  const result = { content: [{ type: "text" as const, text: message }], details: undefined };
+  const ctx = context(presets[name].args, { isError: true });
+  const compact = tool.renderResult!(result, options, theme, ctx);
+  const compactLines = compact.render(80);
+  expect(compactLines).toHaveLength(6);
+  const compactFooter = compactLines.at(-1)!;
+  expect(compactFooter).toContain("✗ error · collapsed · 2 hidden");
+  const expandedOptions = { ...options, expanded: true };
+  const expandedContext = { ...ctx, lastComponent: compact, expanded: true };
+  const expanded = tool.renderResult!(result, expandedOptions, theme, expandedContext);
+  expect(expanded).toBe(compact);
+  const expected = message.replace(/\n/g, "");
+  for (const width of [1, 5, 40, 80]) {
+    const rendered = expanded.render(width);
+    const body = rendered.slice(0, -1);
+    const plain = body.map((line) => stripTerminalSequences(line));
+    const restored = plain.map((line) => line.trimEnd()).join("");
+    expect(restored).toBe(expected);
+    for (const line of rendered) {
+      const columns = visibleWidth(line);
+      expect(columns).toBeLessThanOrEqual(width);
+    }
+  }
 });
 
 it.each([
@@ -501,9 +627,12 @@ it.each(["ls", "find"] as const)(
   },
 );
 
-it("keeps unfamiliar grep output visible with a bounded collapsed preview", () => {
-  const tool = erased(capture("grep").tool);
-  const result = { content: [{ type: "text" as const, text: rows }], details: undefined };
+it("keeps unfamiliar grep output bounded when collapsed and wraps every expanded line", () => {
+  const captured = capture("grep");
+  const tool = erased(captured.tool);
+  const longLine = "unfamiliar".repeat(30) + "TAIL";
+  const fallbackText = rows.replace("row-14", `row-14:${longLine}`);
+  const result = { content: [{ type: "text" as const, text: fallbackText }], details: undefined };
   const ctx = context(presets.grep.args);
   const collapsed = tool.renderResult!(result, options, theme, ctx);
   const output = text(collapsed);
@@ -511,12 +640,19 @@ it("keeps unfamiliar grep output visible with a bounded collapsed preview", () =
   expect(output).not.toContain("row-4");
   expect(output).not.toContain("0 matches");
   expect(output).toContain("output · collapsed · 11 hidden");
-  expect(collapsed.render(180)).toHaveLength(4);
-  const expanded = tool.renderResult!(result, { ...options, expanded: true }, theme, {
-    ...ctx,
-    lastComponent: collapsed,
-  });
-  expect(text(expanded)).toContain("row-14");
+  const collapsedLines = collapsed.render(180);
+  expect(collapsedLines).toHaveLength(4);
+  const expandedOptions = { ...options, expanded: true };
+  const expandedContext = { ...ctx, lastComponent: collapsed, expanded: true };
+  const expanded = tool.renderResult!(result, expandedOptions, theme, expandedContext);
+  const rendered = expanded.render(40);
+  const content = rendered.slice(0, -1);
+  const plain = content.map((line) => stripTerminalSequences(line));
+  const restored = plain.map((line) => line.trimEnd()).join("");
+  const expected = fallbackText.replace(/\n/g, "");
+  expect(restored).toBe(expected);
+  const footer = rendered.at(-1)!;
+  expect(footer).toContain("output · expanded");
 });
 
 it("keeps empty searches and directories distinct from errors", () => {

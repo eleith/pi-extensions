@@ -96,7 +96,7 @@ function renderFindResult(
   const truncated = truncation?.truncated ? " · truncated" : "";
   const summary = `${paths.length} files${limit}${truncated}`;
   const label = resultLabel(summary, expanded, hidden, theme);
-  return frameResultWithBottomLabel(body, label, status, theme, width);
+  return frameResultWithBottomLabel(body, label, status, theme, width, expanded);
 }
 
 function renderGroupedPaths(paths: string[], theme: FindTheme): string {
