@@ -1,5 +1,12 @@
 # @eleith-pi/codex
 
+## 0.2.4
+
+### Patch Changes
+
+- 01352f0: Add GPT-6.2 Sol and Astra context controls and target the advertised 872K Codex maximum for all supported models, preserving larger Pi catalog windows. Declining the reduction from the older 922K extension window keeps the current window without asking again on every prompt. Update Fast eligibility discovery to a catalog version that includes both GPT-6.2 models.
+- 0fe7d51: Give the Codex Usage and Overview overlays a full border so their contents are easier to distinguish from the transcript. Keep the borderless layout on very small terminals.
+
 ## 0.2.3
 
 ### Patch Changes
