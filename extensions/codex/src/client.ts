@@ -5,7 +5,7 @@ const PROVIDER = "openai-codex";
 const BASE_URL = "https://chatgpt.com/backend-api";
 const ACCOUNT_URLS = {
   usage: `${BASE_URL}/wham/usage`,
-  catalog: `${BASE_URL}/codex/models?client_version=0.162.0`,
+  catalog: `${BASE_URL}/codex/models?client_version=0.170.0`,
 } as const;
 type AccountResource = keyof typeof ACCOUNT_URLS;
 const TIMEOUT_MS = 10_000;

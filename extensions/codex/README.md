@@ -1,8 +1,9 @@
 # codex
 
 context controls, account usage, and fast-mode requests using Pi's existing Codex login.
-verified extended-context profiles currently cover GPT-6 Sol, GPT-6.1 Sol, and GPT-6 Astra;
-unknown models are not guessed.
+extended context targets 872K, the advertised Codex catalog maximum for GPT-6 Sol,
+GPT-6 Astra, GPT-6.1 Sol, GPT-6.2 Sol, and GPT-6.2 Astra. larger Pi catalog windows
+are preserved.
 
 ## why
 

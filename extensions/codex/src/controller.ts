@@ -57,6 +57,7 @@ export class ContextController {
   private changing: AbortController | undefined;
   private selecting = false;
   private replayPaused = false;
+  private declinedExtendedReduction?: { model: Model<Api>; target: number };
   private revision = 0;
   private disposed = false;
 
@@ -105,6 +106,7 @@ export class ContextController {
       action === "on" ||
       (action === "toggle" && (!model || this.preferences.get(modelKey(model)) !== true));
     this.replayPaused = false;
+    this.declinedExtendedReduction = undefined;
     await this.change(ctx, extended, true);
   }
 
@@ -125,13 +127,16 @@ export class ContextController {
     if (profile && standardWindow !== undefined) {
       extendedWindow = Math.max(standardWindow, profile.extendedWindow);
     }
+    const desiredExtended = this.preferences.get(modelKey(model));
     return {
       model,
       usage: ctx.getContextUsage(),
       standardWindow,
       extendedWindow,
-      desiredExtended: this.preferences.get(modelKey(model)),
-      replayPaused: this.replayPaused,
+      desiredExtended,
+      replayPaused:
+        this.replayPaused ||
+        (desiredExtended === true && this.wasExtendedReductionDeclined(model, extendedWindow)),
       branch: ctx.sessionManager.getBranch(),
     };
   }
@@ -157,9 +162,12 @@ export class ContextController {
       );
       return;
     }
-    const model = { ...current };
     const target = extended ? Math.max(standardWindow, profile.extendedWindow) : standardWindow;
-    if (!command && model.contextWindow === target) return;
+    if (!command) {
+      if (current.contextWindow === target) return;
+      if (extended && this.wasExtendedReductionDeclined(current, target)) return;
+    }
+    const model = { ...current };
     const revision = this.revision;
     const operation = new AbortController();
     this.changing = operation;
@@ -168,13 +176,17 @@ export class ContextController {
         const answer = await this.confirmReduction(ctx, model, target, operation.signal);
         if (!this.live(revision)) return;
         if (answer !== "confirmed") {
-          if (
-            !command &&
-            answer === "declined" &&
-            model.contextWindow === Math.max(standardWindow, profile.extendedWindow)
-          ) {
-            this.remember(model, true);
-            ctx.ui.notify("Keeping extended context on this branch.", "info");
+          if (answer === "declined") {
+            if (extended) {
+              this.declinedExtendedReduction = { model, target };
+              ctx.ui.notify("Keeping the current context window.", "info");
+            } else if (
+              !command &&
+              model.contextWindow === Math.max(standardWindow, profile.extendedWindow)
+            ) {
+              this.remember(model, true);
+              ctx.ui.notify("Keeping extended context on this branch.", "info");
+            }
           }
           return;
         }
@@ -200,6 +212,11 @@ export class ContextController {
     } finally {
       if (this.changing === operation) this.changing = undefined;
     }
+  }
+
+  private wasExtendedReductionDeclined(model: Model<Api>, target: number | undefined): boolean {
+    const decline = this.declinedExtendedReduction;
+    return decline !== undefined && decline.target === target && matches(model, decline.model);
   }
 
   private remember(model: Model<Api>, extended: boolean): void {
@@ -237,7 +254,7 @@ export class ContextController {
     const sessionId = ctx.sessionManager.getSessionId();
     const leafId = ctx.sessionManager.getLeafId();
     const confirmed = await ctx.ui.confirm(
-      "Use standard context?",
+      "Reduce context window?",
       `Window: ${tokens(model.contextWindow)} → ${tokens(target)} tokens. Current usage: ${tokens(ctx.getContextUsage()?.tokens)}. ` +
         "Pi may compact older history on the next request, depending on your compaction settings.",
       { signal },
@@ -340,6 +357,7 @@ export class ContextController {
       else this.replayPaused = true;
     }
     this.revision++;
+    this.declinedExtendedReduction = undefined;
     this.changing?.abort();
     this.changing = undefined;
   }

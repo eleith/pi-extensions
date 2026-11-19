@@ -171,19 +171,25 @@ async function fixture(window = 272_000, modelId = "gpt-6-sol") {
 it.each([
   ["gpt-6-sol", 272_000],
   ["gpt-6-sol", 300_000],
-  ["gpt-6.1-sol", 500_000],
   ["gpt-6-sol", 1_000_000],
+  ["gpt-6-astra", 272_000],
+  ["gpt-6.1-sol", 500_000],
+  ["gpt-6.2-sol", 500_000],
+  ["gpt-6.2-astra", 272_000],
 ] as const)(
   "SDK catalog %s at %s stays independent through extend, reload, and confirmed restore",
   async (modelId, window) => {
+    const profileWindow = 872_000;
     const f = await fixture(window, modelId);
     const original = structuredClone(f.catalog);
     try {
       const leaf = f.manager.getLeafId();
       await f.session.prompt("/eleith:codex context on");
       const extended = f.session.model!;
-      expect(extended.contextWindow).toBe(Math.max(window, 922_000));
-      if (window < 922_000) {
+      const expectedWindow = Math.max(window, profileWindow);
+      expect(extended.contextWindow).toBe(expectedWindow);
+      expect(extended.maxTokens).toBe(original.maxTokens);
+      if (window < profileWindow) {
         expect(extended).not.toBe(f.catalog);
         expect(f.manager.getLeafId()).not.toBe(leaf);
         expect(f.manager.getBranch().some((entry) => entry.type === "model_change")).toBe(true);
@@ -191,21 +197,25 @@ it.each([
       expect(f.registry.find("openai-codex", modelId)).toEqual(original);
       expect(f.modelSelect).not.toHaveBeenCalled(); // actual same-ID suppression
       expect(f.session.thinkingLevel).toBe("high");
+      // Reload from the baseline so this requires actual replay of the saved preference.
+      await f.session.setModel(f.catalog);
+      f.session.setThinkingLevel("high");
+      expect(f.session.model?.contextWindow).toBe(window);
       await f.session.reload();
-      expect(f.session.model?.contextWindow).toBe(Math.max(window, 922_000));
+      expect(f.session.model?.contextWindow).toBe(expectedWindow);
       expect(f.registry.find("openai-codex", modelId)?.contextWindow).toBe(window);
       await f.session.prompt("/eleith:codex context off");
       expect(f.session.model?.contextWindow).toBe(window);
-      expect(extended.contextWindow).toBe(Math.max(window, 922_000));
+      expect(extended.contextWindow).toBe(expectedWindow);
       expect(f.catalog).toEqual(original);
-      expect(f.confirm).toHaveBeenCalledTimes(window < 922_000 ? 1 : 0);
+      expect(f.confirm).toHaveBeenCalledTimes(window < profileWindow ? 1 : 0);
       expect(f.session.thinkingLevel).toBe("high");
       expect(f.modelSelect).not.toHaveBeenCalled();
       expect(f.preferences()).toEqual([
         { provider: "openai-codex", modelId, extended: true },
         { provider: "openai-codex", modelId, extended: false },
       ]);
-      if (window >= 922_000)
+      if (window >= profileWindow)
         expect(f.notify).toHaveBeenLastCalledWith(
           expect.stringContaining("no smaller default is known"),
           "info",
@@ -222,7 +232,7 @@ it("SDK replays a saved context preference after the command rename", async () =
   try {
     f.manager.appendCustomEntry("eleith-context", saved);
     await f.session.reload();
-    expect(f.session.model?.contextWindow).toBe(922_000);
+    expect(f.session.model?.contextWindow).toBe(872_000);
     expect(f.preferences()).toEqual([saved]);
 
     await f.session.prompt("/eleith:codex context off");
@@ -268,7 +278,7 @@ it.each(["rename", "external"])(
       }
       resume();
       await request;
-      expect(f.session.model?.contextWindow).toBe(922_000);
+      expect(f.session.model?.contextWindow).toBe(872_000);
       expect(f.session.model?.id).toBe("gpt-6-sol"); // older call can replace external intent
       expect(submitted).toEqual(originalSubmitted);
       expect(f.catalog).toEqual(originalCatalog);
@@ -313,7 +323,7 @@ it.each(["missing", "endpoint"])(
       const select = vi.spyOn(f.session, "setModel");
       await f.session.prompt("/eleith:codex context off");
       expect(select).not.toHaveBeenCalled();
-      expect(f.session.model?.contextWindow).toBe(922_000);
+      expect(f.session.model?.contextWindow).toBe(872_000);
       expect(f.confirm).not.toHaveBeenCalled();
       expect(f.preferences()).toHaveLength(1);
       expect(f.notify).toHaveBeenLastCalledWith(
@@ -390,17 +400,17 @@ it.each(["user", "custom"] as const)(
         f.beforeStart.mockClear();
       }
       await f.session.prompt("Continue on the selected branch");
-      expect(f.input).toHaveBeenCalledExactlyOnceWith({ idle: true, window: 922_000 });
+      expect(f.input).toHaveBeenCalledExactlyOnceWith({ idle: true, window: 872_000 });
       expect(f.beforeStart).toHaveBeenCalledExactlyOnceWith({
         messageType: "user",
         idle: VERSION.startsWith("1.1."),
-        window: 922_000,
+        window: 872_000,
       });
-      expect(f.stream.mock.lastCall?.[0].contextWindow).toBe(922_000);
+      expect(f.stream.mock.lastCall?.[0].contextWindow).toBe(872_000);
       expect(select).toHaveBeenCalledTimes(1);
       expect(thinkingWrites.mock.calls).toEqual([["medium"], ["high"]]);
       expect(f.session.thinkingLevel).toBe("high");
-      expect(f.session.model?.contextWindow).toBe(922_000);
+      expect(f.session.model?.contextWindow).toBe(872_000);
       expect(f.confirm).toHaveBeenCalledTimes(1);
       expect(f.notify).not.toHaveBeenCalledWith(expect.anything(), "warning");
       expect(network).not.toHaveBeenCalled();

@@ -28,11 +28,12 @@ const directory = await vi.hoisted(async () => {
   return directory;
 });
 
-const CATALOG_URL = "https://chatgpt.com/backend-api/codex/models?client_version=0.162.0";
+const CATALOG_URL = "https://chatgpt.com/backend-api/codex/models?client_version=0.170.0";
 const RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const SOCKET_URL = "wss://chatgpt.com/backend-api/codex/responses";
 const FAST_ENTRY = "eleith-codex-fast";
 type Transport = "sse" | "websocket";
+const GPT_6_2_WINDOWS = { "gpt-6.2-sol": 500_000, "gpt-6.2-astra": 272_000 } as const;
 
 beforeEach(blockUnexpectedNetwork);
 afterEach(() => {
@@ -45,12 +46,19 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-it.each(["sse", "websocket"] as const)(
-  "SDK fast on reaches the native Codex %s wire, independently of the observed tier",
-  async (transport) => {
+it.each([
+  ["sse", "gpt-6-sol"],
+  ["websocket", "gpt-6-sol"],
+  ["sse", "gpt-6.2-sol"],
+  ["websocket", "gpt-6.2-sol"],
+  ["sse", "gpt-6.2-astra"],
+  ["websocket", "gpt-6.2-astra"],
+] as const)(
+  "SDK fast on reaches the native Codex %s wire for %s, independently of the observed tier",
+  async (transport, modelId) => {
     const network = installResponseTransports(transport);
     const { runtime, model, accessToken, credentialWrites, resolveAuth, modelTurns } =
-      await createOfflineModelRuntime(transport, network.fetch);
+      await createOfflineModelRuntime(transport, network.fetch, modelId);
     const { session, manager, confirm, notify, input, beforeStart, errors, closeSession } =
       await openRealExtensionSession(runtime, model);
     try {
@@ -96,6 +104,9 @@ it.each(["sse", "websocket"] as const)(
         "info",
       );
 
+      await session.prompt("/eleith:codex context on");
+      expect(session.model?.contextWindow).toBe(872_000);
+      expect(session.model?.maxTokens).toBe(model.maxTokens);
       const enabledBranch = structuredClone(manager.getBranch());
       resolveAuth.mockClear();
       // Already on is a local no-op, even if discovery has become unavailable.
@@ -116,6 +127,7 @@ it.each(["sse", "websocket"] as const)(
       expectNativeAuthOnly(resolveAuth);
       expect(network.catalog).toHaveBeenCalledOnce();
       expect(modelTurns).toHaveBeenCalledOnce();
+      expect(modelTurns.mock.lastCall?.[0].contextWindow).toBe(872_000);
       expect(network.payloads).toEqual([
         expect.objectContaining({ model: model.id, service_tier: "priority" }),
       ]);
@@ -165,6 +177,10 @@ it.each(["sse", "websocket"] as const)(
       expect(resolveAuth).not.toHaveBeenCalled();
       expect(modelTurns).toHaveBeenCalledOnce();
       expect(credentialWrites).not.toHaveBeenCalled();
+      await session.prompt("/eleith:codex context off");
+      expect(session.model?.contextWindow).toBe(model.contextWindow);
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(modelTurns).toHaveBeenCalledOnce();
       expect(errors).toEqual([]);
     } finally {
       await closeSession();
@@ -554,7 +570,22 @@ function installResponseTransports(transport: Transport) {
 
 function createHttpResponses(transport: Transport, payloads: Record<string, unknown>[]) {
   const catalog = vi.fn<typeof fetch>(async () =>
-    Response.json({ models: [{ slug: "gpt-6-sol", service_tiers: [{ id: "priority" }] }] }),
+    Response.json({
+      models: [
+        { slug: "gpt-6-sol", service_tiers: [{ id: "priority" }] },
+        {
+          slug: "gpt-6.2-sol",
+          // Signed-in catalogs may also advertise Ultrafast; fast on still requests priority.
+          service_tiers: [{ id: "priority" }, { id: "ultrafast" }],
+          additional_speed_tiers: ["fast", "ultrafast"],
+        },
+        {
+          slug: "gpt-6.2-astra",
+          service_tiers: [{ id: "priority" }],
+          additional_speed_tiers: ["fast"],
+        },
+      ],
+    }),
   );
   const sse = vi.fn<typeof fetch>(async (_url, init) => {
     if (transport !== "sse") throw new Error("Unexpected SSE fallback");
@@ -609,22 +640,38 @@ function installSocketResponses(payloads: Record<string, unknown>[]) {
 }
 
 // Offline ModelRuntime: real built-in provider and OAuth resolution, never persistence or refresh I/O.
-async function createOfflineModelRuntime(transport: Transport, fetcher: typeof fetch) {
+async function createOfflineModelRuntime(
+  transport: Transport,
+  fetcher: typeof fetch,
+  modelId: "gpt-6-sol" | keyof typeof GPT_6_2_WINDOWS = "gpt-6-sol",
+) {
   const claim = { "https://api.openai.com/auth": { chatgpt_account_id: "fast-sdk-account" } };
   const accessToken = `e30.${Buffer.from(JSON.stringify(claim)).toString("base64url")}.fake-signature`;
   const { credentials, credentialWrites } = createReadOnlyCredentials(accessToken);
+  const modelsStore = new InMemoryModelsStore();
   const runtime = await ModelRuntime.create({
     credentials,
     modelsPath: null,
-    modelsStore: new InMemoryModelsStore(),
+    modelsStore,
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
+  if (modelId !== "gpt-6-sol") {
+    // Pi's bundled test SDK predates 6.2. Load it as a catalog overlay, not a provider override.
+    const template = runtime.getModel("openai-codex", "gpt-6-sol");
+    if (!template) throw new Error("Built-in Codex model missing");
+    await modelsStore.write("openai-codex", {
+      models: [
+        { ...template, id: modelId, name: modelId, contextWindow: GPT_6_2_WINDOWS[modelId] },
+      ],
+      lastModified: Number.MAX_SAFE_INTEGER,
+    });
+  }
   const refresh = await runtime.refresh({ providers: ["openai-codex"], allowNetwork: false });
   expect(refresh.errors.size).toBe(0);
   expect(runtime.isUsingOAuth("openai-codex")).toBe(true);
-  const model = runtime.getModel("openai-codex", "gpt-6-sol");
-  if (!model) throw new Error("Built-in Codex model missing");
+  const model = runtime.getModel("openai-codex", modelId);
+  if (!model) throw new Error(`Codex model missing from test catalog: ${modelId}`);
   const resolveAuth = vi.spyOn(runtime, "getAuth");
   const nativeStream = runtime.streamSimple.bind(runtime);
   // Only select the transport at this public seam; retain native serialization and extension hooks.

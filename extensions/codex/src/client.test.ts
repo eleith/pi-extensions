@@ -81,7 +81,7 @@ it("returns raw catalog JSON using only Pi's resolved routing credentials", asyn
   expect(f.registry.getProviderAuth).toHaveBeenCalledExactlyOnceWith("openai-codex");
   const requestOptions = expect.objectContaining({ method: "GET", redirect: "error" });
   expect(f.fetcher).toHaveBeenCalledExactlyOnceWith(
-    `${BASE_URL}/codex/models?client_version=0.162.0`,
+    `${BASE_URL}/codex/models?client_version=0.170.0`,
     requestOptions,
   );
   const headers = new Headers(f.fetcher.mock.calls[0][1]?.headers);

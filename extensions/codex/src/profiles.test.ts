@@ -26,38 +26,37 @@ describe("context profiles", () => {
   });
 
   it.each([
-    ["gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-sol"],
-    ["gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-6-sol"],
-    ["gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6-astra"],
-  ])("provides the 922000-token local window for %s", (id, source) => {
-    const current = model(id);
+    ["gpt-6-sol", 272_000],
+    ["gpt-6.1-sol", 500_000],
+    ["gpt-6-astra", 272_000],
+    ["gpt-6.2-sol", 500_000],
+    ["gpt-6.2-astra", 272_000],
+  ] as const)("uses the Codex catalog maximum for %s", (id, contextWindow) => {
+    const current = { ...model(id), contextWindow };
     const original = structuredClone(current);
-    expect(contextProfile(current)).toEqual({ extendedWindow: 922_000, source });
-    // The profile is metadata, not a mutation of the model's server/output limits.
+    const profile = contextProfile(current);
+    expect(profile).toEqual({
+      extendedWindow: 872_000,
+      source:
+        "https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/models-manager/models.json",
+    });
+    expect(profile).toBe(contextProfile(model("gpt-6-sol")));
+    expect(Object.isFrozen(profile)).toBe(true);
     expect(current).toEqual(original);
-    expect(current.contextWindow).toBe(272_000);
-    expect(current.maxTokens).toBe(128_000);
   });
 
   it.each([
     ["gpt-6-sol", "openai"],
     ["gpt-6-sol", "other"],
     ["gpt-6", "openai-codex"],
-    ["gpt-6.2-sol", "openai-codex"],
+    ["gpt-6.2-sol", "openai"],
     ["gpt-6.1-astra", "openai-codex"],
+    ["gpt-6.3-sol", "openai-codex"],
     ["gpt-7-sol", "openai-codex"],
     ["gpt-6-sol-2026-10-08", "openai-codex"],
     ["GPT-6-SOL", "openai-codex"],
   ])("has no profile for %s at %s", (id, provider) => {
     expect(contextProfile(model(id, provider))).toBeUndefined();
-  });
-
-  it("shares immutable verified Sol metadata without matching future model names", () => {
-    const profile = contextProfile(model("gpt-6-sol"));
-    expect(profile).toBe(contextProfile(model("gpt-6.1-sol")));
-    expect(Object.isFrozen(profile)).toBe(true);
-    expect(Object.isFrozen(contextProfile(model("gpt-6-astra")))).toBe(true);
-    expect(contextProfile(model("gpt-6.2-sol"))).toBeUndefined();
   });
 
   it("requires the native Codex API even when the provider and ID match", () => {

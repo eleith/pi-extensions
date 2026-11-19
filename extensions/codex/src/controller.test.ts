@@ -14,7 +14,7 @@ describe("ContextController", () => {
     async ({ saved, selectedExtended }) => {
       const f = fixture();
       f.state.branch = saved === undefined ? [] : [entry(preference(saved))];
-      f.state.current = selectedExtended ? { ...f.catalog, contextWindow: 922_000 } : f.catalog;
+      f.state.current = selectedExtended ? { ...f.catalog, contextWindow: 872_000 } : f.catalog;
       // Load the active branch without replay aligning metadata to its preference.
       f.state.idle = false;
       await f.controller.restore(f.ctx);
@@ -23,7 +23,7 @@ describe("ContextController", () => {
       await f.controller.handle(" TOGGLE ", f.ctx);
 
       const extended = saved !== true;
-      expect(f.state.current?.contextWindow).toBe(extended ? 922_000 : 272_000);
+      expect(f.state.current?.contextWindow).toBe(extended ? 872_000 : 272_000);
       expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBe(extended);
       expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(
         CONTEXT_ENTRY,
@@ -94,7 +94,7 @@ describe("ContextController", () => {
       await request;
 
       const extended = pending === "selection";
-      expect(f.state.current?.contextWindow).toBe(extended ? 922_000 : 272_000);
+      expect(f.state.current?.contextWindow).toBe(extended ? 872_000 : 272_000);
       expect(f.controller.getStatus(f.ctx)?.desiredExtended).toBe(extended);
       expect(f.api.appendEntry).toHaveBeenCalledTimes(records + 1);
       expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(extended));
@@ -127,12 +127,12 @@ describe("ContextController", () => {
       await f.controller.handle(" ON ", f.ctx);
 
       expect(f.state.current).not.toBe(f.catalog);
-      expect(f.state.current).toEqual({ ...original, contextWindow: 922_000 });
+      expect(f.state.current).toEqual({ ...original, contextWindow: 872_000 });
       expect(f.catalog).toEqual(original);
       expect(f.state.thinking).toBe("medium");
       expect(f.api.setThinkingLevel).toHaveBeenCalledWith("medium");
       expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(CONTEXT_ENTRY, preference(true));
-      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("922,000 tokens"), "info");
+      expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("872,000 tokens"), "info");
 
       await f.controller.handle("on", f.ctx);
       expect(f.api.setModel).toHaveBeenCalledTimes(1);
@@ -170,7 +170,7 @@ describe("ContextController", () => {
         return true;
       });
       await f.controller.handle("on", f.ctx);
-      expect(f.state.current?.contextWindow).toBe(922_000);
+      expect(f.state.current?.contextWindow).toBe(872_000);
       expect(f.catalog.contextWindow).toBe(272_000);
       expect(f.state.thinking).toBe("medium");
       expect(f.api.appendEntry).toHaveBeenCalledExactlyOnceWith(CONTEXT_ENTRY, preference(true));
@@ -185,13 +185,13 @@ describe("ContextController", () => {
     await f.controller.handle("off", f.ctx);
 
     expect(f.confirm).toHaveBeenCalledWith(
-      "Use standard context?",
-      expect.stringContaining("922,000 → 272,000"),
+      "Reduce context window?",
+      expect.stringContaining("872,000 → 272,000"),
       { signal: expect.any(AbortSignal) },
     );
     expect(f.state.current).not.toBe(extended);
     expect(f.state.current?.contextWindow).toBe(272_000);
-    expect(extended.contextWindow).toBe(922_000);
+    expect(extended.contextWindow).toBe(872_000);
     expect(f.catalog.contextWindow).toBe(272_000);
     expect(f.state.thinking).toBe("high");
     expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
@@ -217,7 +217,7 @@ describe("ContextController", () => {
     await f.controller.reconcile(f.ctx);
     await f.controller.handle("on", f.ctx);
 
-    expect(owned.contextWindow).toBe(922_000);
+    expect(owned.contextWindow).toBe(872_000);
     expect(f.catalog.contextWindow).toBe(272_000);
     expect(f.api.setModel).not.toHaveBeenCalled();
     expect(f.api.appendEntry).not.toHaveBeenCalled();
@@ -240,7 +240,7 @@ describe("ContextController", () => {
 
     f.state.accepted = true;
     await f.controller.handle("on", f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
   });
 
@@ -255,7 +255,7 @@ describe("ContextController", () => {
     expect(f.api.setModel).toHaveBeenCalledTimes(1);
     expect(f.api.appendEntry).not.toHaveBeenCalled();
     await f.controller.handle("on", f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     expect(f.state.thinking).toBe("medium");
     expect(f.api.setModel).toHaveBeenCalledTimes(2);
     // The saved desired preference was already true; no redundant record.
@@ -284,7 +284,7 @@ describe("ContextController", () => {
     f.confirm.mockResolvedValueOnce(false);
     await f.controller.handle("off", f.ctx);
     expect(f.state.current).toBe(owned);
-    expect(owned?.contextWindow).toBe(922_000);
+    expect(owned?.contextWindow).toBe(872_000);
     expect(f.api.setModel).toHaveBeenCalledTimes(1);
     expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
 
@@ -295,12 +295,12 @@ describe("ContextController", () => {
   it("usage above the target requires compaction before a reduction dialog", async () => {
     const f = fixture();
     await f.controller.handle("on", f.ctx);
-    f.state.usage = { tokens: 272_001, contextWindow: 922_000, percent: null };
+    f.state.usage = { tokens: 272_001, contextWindow: 872_000, percent: null };
     await f.controller.handle("off", f.ctx);
     expect(f.confirm).not.toHaveBeenCalled();
     expect(f.api.setModel).toHaveBeenCalledTimes(1);
     expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("Run /compact"), "warning");
   });
 
@@ -313,7 +313,7 @@ describe("ContextController", () => {
     expect(f.confirm).not.toHaveBeenCalled();
     expect(f.api.setModel).toHaveBeenCalledTimes(1);
     expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     expect(f.notify).toHaveBeenLastCalledWith(
       expect.stringContaining("interactive confirmation"),
       "warning",
@@ -340,7 +340,7 @@ describe("ContextController", () => {
 
     f.state.branch.push(entry(preference(true)), entry(null));
     await f.controller.restore(f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     expect(f.api.appendEntry).not.toHaveBeenCalled();
     expect(f.catalog.contextWindow).toBe(272_000);
   });
@@ -353,7 +353,7 @@ describe("ContextController", () => {
     await f.controller.restore(f.ctx);
     await f.controller.reconcile(f.ctx);
     expect(f.confirm).not.toHaveBeenCalled();
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
 
     const answer = deferred<boolean>();
     f.confirm.mockReturnValueOnce(answer.promise);
@@ -383,7 +383,69 @@ describe("ContextController", () => {
     expect(f.notify).toHaveBeenLastCalledWith("Keeping extended context on this branch.", "info");
     await f.controller.reconcile(f.ctx);
     expect(f.confirm).toHaveBeenCalledTimes(1);
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
+  });
+
+  it("applies the new extended window without rewriting a saved preference", async () => {
+    const f = fixture();
+    f.state.current = { ...f.catalog, contextWindow: 922_000 };
+    f.state.branch = [entry(preference(true))];
+
+    await f.controller.restore(f.ctx);
+    expect(f.confirm).toHaveBeenCalledExactlyOnceWith(
+      "Reduce context window?",
+      expect.stringContaining("922,000 → 872,000"),
+      expect.anything(),
+    );
+    expect(f.state.current?.contextWindow).toBe(872_000);
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
+  });
+
+  it.each(["command", "branch change", "model selection"] as const)(
+    "defers a declined extended-window reduction until %s",
+    async (retry) => {
+      const f = fixture();
+      f.state.current = { ...f.catalog, contextWindow: 922_000 };
+      f.state.branch = [entry(preference(true))];
+      f.confirm.mockResolvedValueOnce(false);
+
+      await f.controller.restore(f.ctx);
+      // Advancing the conversation does not count as switching branches.
+      f.state.leafId = "next-message";
+      await f.controller.reconcile(f.ctx);
+      await f.controller.reconcile(f.ctx);
+      expect(f.confirm).toHaveBeenCalledTimes(1);
+      expect(f.state.current?.contextWindow).toBe(922_000);
+      expect(f.api.setModel).not.toHaveBeenCalled();
+      expect(f.controller.getStatus(f.ctx)).toMatchObject({
+        desiredExtended: true,
+        replayPaused: true,
+      });
+
+      if (retry === "command") await f.controller.handle("on", f.ctx);
+      else if (retry === "branch change") await f.controller.restore(f.ctx);
+      else await f.controller.modelSelected(f.ctx);
+      expect(f.confirm).toHaveBeenCalledTimes(2);
+      expect(f.state.current?.contextWindow).toBe(872_000);
+      expect(f.controller.getStatus(f.ctx)).toMatchObject({
+        desiredExtended: true,
+        replayPaused: false,
+      });
+      expect(f.api.appendEntry).not.toHaveBeenCalled();
+    },
+  );
+
+  it("blocks reduction when current usage exceeds the new extended window", async () => {
+    const f = fixture();
+    f.state.current = { ...f.catalog, contextWindow: 922_000 };
+    f.state.branch = [entry(preference(true))];
+    f.state.usage = { tokens: 900_000, contextWindow: 922_000, percent: null };
+
+    await f.controller.restore(f.ctx);
+    expect(f.notify).toHaveBeenLastCalledWith(expect.stringContaining("Run /compact"), "warning");
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.api.setModel).not.toHaveBeenCalled();
+    expect(f.api.appendEntry).not.toHaveBeenCalled();
   });
 
   it("shutdown aborts the confirmation signal without accessing the expired root", async () => {
@@ -403,7 +465,7 @@ describe("ContextController", () => {
     expect(signal?.aborted).toBe(true);
     expect(f.state.staleReads).toBe(0);
     expect(f.notify).not.toHaveBeenCalled();
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     expect(f.api.setModel).toHaveBeenCalledTimes(1);
     expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
   });
@@ -439,7 +501,7 @@ describe("ContextController", () => {
       expect(f.state.staleReads).toBe(0);
       expect(f.notify).not.toHaveBeenCalled();
       expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
-      expect(extended.contextWindow).toBe(922_000);
+      expect(extended.contextWindow).toBe(872_000);
       await f.controller.reconcile(f.ctx);
       expect(f.confirm).toHaveBeenCalledTimes(1);
       if (event !== "shutdown") {
@@ -470,7 +532,7 @@ describe("ContextController", () => {
     },
   );
 
-  it.each([undefined, { tokens: null, contextWindow: 922_000, percent: null }])(
+  it.each([undefined, { tokens: null, contextWindow: 872_000, percent: null }])(
     "confirms reduction with unknown usage %j without inventing zero",
     async (usage) => {
       const f = fixture();
@@ -478,7 +540,7 @@ describe("ContextController", () => {
       f.state.usage = usage;
       await f.controller.handle("off", f.ctx);
       expect(f.confirm).toHaveBeenCalledWith(
-        "Use standard context?",
+        "Reduce context window?",
         expect.stringContaining("usage: unknown"),
         expect.anything(),
       );
@@ -502,11 +564,11 @@ describe("ContextController", () => {
     expect(extended.cost).toBe(f.catalog.cost);
     await f.controller.handle("off", f.ctx);
     expect(f.state.current?.contextWindow).toBe(272_000);
-    expect(extended.contextWindow).toBe(922_000);
+    expect(extended.contextWindow).toBe(872_000);
     expect(f.catalog).toEqual(original);
     expect(f.api.appendEntry).toHaveBeenCalledTimes(2);
     f.controller.shutdown();
-    expect(extended.contextWindow).toBe(922_000);
+    expect(extended.contextWindow).toBe(872_000);
   });
 
   it("compares captured values even when another writer mutates a retained submitted object", async () => {
@@ -552,7 +614,7 @@ describe("ContextController", () => {
     const f = fixture();
     await f.controller.handle("on", f.ctx);
     f.confirm.mockImplementationOnce(async () => {
-      f.state.usage = { tokens: 300_000, contextWindow: 922_000, percent: null };
+      f.state.usage = { tokens: 300_000, contextWindow: 872_000, percent: null };
       return true;
     });
     await f.controller.handle("off", f.ctx);
@@ -568,7 +630,7 @@ describe("ContextController", () => {
       await f.controller.handle("on", f.ctx);
       f.state.branch = [];
       if (reason === "usage")
-        f.state.usage = { tokens: 300_000, contextWindow: 922_000, percent: null };
+        f.state.usage = { tokens: 300_000, contextWindow: 872_000, percent: null };
       else f.state.hasUI = false;
       await f.controller.restore(f.ctx);
       expect(f.confirm).not.toHaveBeenCalled();
@@ -598,7 +660,7 @@ describe("ContextController", () => {
       else f.state[key] = "changed";
       finish.resolve(true);
       await request;
-      expect(f.api.setModel.mock.calls[0][0].contextWindow).toBe(922_000);
+      expect(f.api.setModel.mock.calls[0][0].contextWindow).toBe(872_000);
       expect(f.catalog.contextWindow).toBe(272_000);
       expect(f.state.thinking).toBe("off");
       expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
@@ -610,7 +672,7 @@ describe("ContextController", () => {
       await f.controller.restore(f.ctx);
       expect(f.api.setModel).toHaveBeenCalledTimes(1);
       await f.controller.handle("on", f.ctx);
-      expect(f.state.current?.contextWindow).toBe(922_000);
+      expect(f.state.current?.contextWindow).toBe(872_000);
       expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
     },
   );
@@ -644,7 +706,7 @@ describe("ContextController", () => {
       await request;
       expect(copy).toEqual(original);
       expect(f.state.staleReads).toBe(0);
-      expect(f.state.current?.contextWindow).toBe(922_000);
+      expect(f.state.current?.contextWindow).toBe(872_000);
       expect(f.api.appendEntry).not.toHaveBeenCalled();
       expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
       expect(f.notify).not.toHaveBeenCalled();
@@ -663,7 +725,7 @@ describe("ContextController", () => {
       throw new Error("model hook failed after assignment");
     });
     await f.controller.handle(action, f.ctx);
-    expect(f.state.current?.contextWindow).toBe(action === "on" ? 922_000 : 272_000);
+    expect(f.state.current?.contextWindow).toBe(action === "on" ? 872_000 : 272_000);
     expect(previous).toEqual(original);
     expect(f.state.thinking).toBe("off");
     expect(f.api.setThinkingLevel).not.toHaveBeenCalled();
@@ -697,7 +759,7 @@ describe("ContextController", () => {
     await request;
     expect(f.state.current).toEqual(originalPending);
     expect(external).toEqual(originalExternal);
-    expect(oldCopy.contextWindow).toBe(922_000);
+    expect(oldCopy.contextWindow).toBe(872_000);
     expect(f.state.thinking).toBe("off");
     expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
     expect(f.notify).toHaveBeenCalledWith(
@@ -717,7 +779,7 @@ describe("ContextController", () => {
     f.state.catalog = astra;
     await f.assign(astra);
     expect(f.state.current?.id).toBe("gpt-6-astra");
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     expect(astra.contextWindow).toBe(272_000);
     expect(f.api.setModel).toHaveBeenCalledTimes(1);
     expect(f.api.appendEntry).not.toHaveBeenCalled();
@@ -731,8 +793,8 @@ describe("ContextController", () => {
     await f.assign(f.catalog); // no model_select
     expect(f.state.current?.contextWindow).toBe(272_000);
     await f.controller.reconcile(f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
-    expect(oldCopy.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
+    expect(oldCopy.contextWindow).toBe(872_000);
     expect(f.catalog.contextWindow).toBe(272_000);
     expect(f.api.appendEntry).toHaveBeenCalledTimes(1);
   });
@@ -743,20 +805,20 @@ describe("ContextController", () => {
     f.controller.shutdown();
     const controller = new ContextController(f.api, "personal:codex");
     await controller.restore(f.ctx);
-    expect(f.state.current?.contextWindow).toBe(922_000);
+    expect(f.state.current?.contextWindow).toBe(872_000);
     await controller.handle("off", f.ctx);
     expect(f.api.setModel.mock.lastCall?.[0].contextWindow).toBe(272_000);
     expect(f.state.current?.contextWindow).toBe(272_000);
     expect(f.api.appendEntry).toHaveBeenLastCalledWith(CONTEXT_ENTRY, preference(false));
   });
 
-  it.each([300_000, 922_000, 1_000_000])(
+  it.each([300_000, 872_000, 1_000_000])(
     "honors catalog override %s rather than a guessed default",
     async (window) => {
       const f = fixture({ ...model(), contextWindow: window });
       await f.controller.handle("on", f.ctx);
-      expect(f.state.current?.contextWindow).toBe(Math.max(window, 922_000));
-      if (window >= 922_000) {
+      expect(f.state.current?.contextWindow).toBe(Math.max(window, 872_000));
+      if (window >= 872_000) {
         expect(f.api.setModel).not.toHaveBeenCalled();
         expect(f.notify).toHaveBeenLastCalledWith(
           `Using catalog context: ${window.toLocaleString("en-US")} tokens. No extension is needed.`,
@@ -765,7 +827,7 @@ describe("ContextController", () => {
       }
       await f.controller.handle("off", f.ctx);
       expect(f.state.current?.contextWindow).toBe(window);
-      if (window >= 922_000) {
+      if (window >= 872_000) {
         expect(f.confirm).not.toHaveBeenCalled();
         expect(f.notify).toHaveBeenLastCalledWith(
           expect.stringContaining("no smaller default is known"),
@@ -775,7 +837,7 @@ describe("ContextController", () => {
     },
   );
 
-  it.each(["gpt-6.2-sol", "gpt-6.1-astra", "gpt-7-sol"])(
+  it.each(["gpt-6.3-sol", "gpt-6.1-astra", "gpt-7-sol"])(
     "does not guess an extended limit or replay saved preferences for %s",
     async (id) => {
       const f = fixture(model(id));
@@ -819,7 +881,7 @@ describe("ContextController", () => {
     ...[0, -1, NaN, Infinity].map((contextWindow) => ({ ...model(), contextWindow })),
   ])("refuses missing/incompatible/invalid catalog baseline %j", async (catalog) => {
     const f = fixture();
-    f.state.current = { ...f.catalog, contextWindow: 922_000 };
+    f.state.current = { ...f.catalog, contextWindow: 872_000 };
     f.state.catalog = catalog;
     await f.controller.handle("off", f.ctx);
     await f.controller.handle("on", f.ctx);
