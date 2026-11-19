@@ -32,6 +32,10 @@ it.each(
     setProgramStatus() {},
   } satisfies Terminal;
   const tui = new TuiMainScreen(terminal);
+  tui.addChild({
+    render: (width) => Array.from({ length: rows }, () => "X".repeat(width)),
+    invalidate() {},
+  });
   const ctx: InspectorHost = {
     mode: "tui",
     sessionManager: { getSessionId: () => "session" },
@@ -54,7 +58,7 @@ it.each(
     overlay = tui.showOverlay(component, options);
     // Reuse the mounted overlay through extreme horizontal resizes. Component-only
     // width checks cannot catch off-screen placement caused by host margins.
-    for (const columns of [100, 76, 24, 3, 2, 1, 100]) {
+    for (const columns of [100, 76, 24, 5, 4, 3, 2, 1, 100]) {
       terminal.columns = columns;
       tui.renderNow(true);
       const bounds = overlay.getBounds()!;
@@ -62,12 +66,29 @@ it.each(
       expect(bounds.row + bounds.height).toBeLessThanOrEqual(rows);
       expect(bounds.col).toBeGreaterThanOrEqual(0);
       expect(bounds.col + bounds.width).toBeLessThanOrEqual(columns);
+      const screen = tui.captureRenderState().previousLines.map(stripVTControlCharacters);
+      const inside = screen.slice(bounds.row, bounds.row + bounds.height).map((line) => {
+        expect(line.slice(0, bounds.col)).toBe("X".repeat(bounds.col));
+        expect(line.slice(bounds.col + bounds.width)).toBe(
+          "X".repeat(columns - bounds.col - bounds.width),
+        );
+        return line.slice(bounds.col, bounds.col + bounds.width);
+      });
+      const framed = rows >= 5 && bounds.width >= 5;
+      if (framed) {
+        const rule = "─".repeat(bounds.width - 2);
+        expect(inside[0]).toBe(`╭${rule}╮`);
+        expect(inside.at(-1)).toBe(`╰${rule}╯`);
+        for (const line of inside.slice(1, -1)) expect(line).toMatch(/^│[^X]*│$/u);
+      } else {
+        expect(inside.join("\n")).not.toMatch(/[╭╮╰╯│]/u);
+      }
       if (columns === 100) {
-        const screen = tui.captureRenderState().previousLines.map(stripVTControlCharacters);
-        expect(screen.join("\n")).toContain(loading ? "cancel" : "close");
-        if (rows >= 2) expect(screen.join("\n")).toContain("Codex · Overview");
+        expect(inside.join("\n")).toContain(loading ? "cancel" : "close");
+        if (rows >= 2) expect(inside.join("\n")).toContain("Codex · Overview");
         if (rows >= 3)
-          expect(screen.join("\n")).toContain(loading ? "Fetching usage" : "Report row");
+          expect(inside.join("\n")).toContain(loading ? "Fetching usage" : "Report row");
+        if (framed) expect(inside[1]).toMatch(/^│ Codex · Overview +│$/u);
       }
     }
     expect(ctx.ui.notify).not.toHaveBeenCalled();

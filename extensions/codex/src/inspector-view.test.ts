@@ -1,7 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DynamicBorder,
   type KeybindingsManager as AgentKeybindingsManager,
   Theme,
 } from "@earendil-works/pi-coding-agent";
@@ -29,11 +28,11 @@ afterEach(() => {
 function makeTheme(color = 39) {
   return new Theme(
     {
-      accent: color,
+      accent: color + 1,
       border: color,
-      text: color,
-      muted: color,
-      dim: color,
+      text: color + 2,
+      muted: color + 3,
+      dim: color + 4,
       warning: color === 39 ? 214 : 220,
       error: color === 39 ? 196 : 160,
       thinkingXhigh: color,
@@ -46,6 +45,7 @@ function makeTheme(color = 39) {
 function setup(
   initial: InspectorContent | { loading: string } = { message: "Account allowance" },
   rows = 24,
+  title = "Usage",
 ) {
   const terminal = { rows, columns: 120 };
   const requestRender = vi.fn();
@@ -59,7 +59,7 @@ function setup(
     tui,
     theme,
     keybindings as unknown as AgentKeybindingsManager,
-    "Usage",
+    title,
     onClose,
     initial,
   );
@@ -72,30 +72,33 @@ const message = Array.from(
   { length: 40 },
   (_, index) => `line-${String(index).padStart(2, "0")}`,
 ).join("\n");
-const body = (view: CodexInspectorView, width = 100) => plain(view.render(width)).slice(2, -2);
+const insideFrame = (line: string) => line.slice(1, -1).trimEnd();
+const body = (view: CodexInspectorView, width = 100) =>
+  plain(view.render(width)).slice(2, -2).map(insideFrame);
 
-it("composes real native borders, text, container and ScrollView without a second box", () => {
-  const borderRender = vi.spyOn(DynamicBorder.prototype, "render");
+it("frames the title, body, and footer with themed borders on all four sides", () => {
   const textRender = vi.spyOn(Text.prototype, "render");
   const containerRender = vi.spyOn(Container.prototype, "render");
   const scrollRender = vi.spyOn(ScrollView.prototype, "render");
   const { view, theme } = setup();
   const lines = view.render(80);
-  expect(plain(lines)).toEqual([
-    "─".repeat(80),
+  const side = theme.fg("border", "│");
+  expect(lines[0]).toBe(theme.fg("border", `╭${"─".repeat(78)}╮`));
+  expect(lines.at(-1)).toBe(theme.fg("border", `╰${"─".repeat(78)}╯`));
+  const interior = lines.slice(1, -1);
+  for (const line of interior) {
+    expect(line.startsWith(side)).toBe(true);
+    expect(line.endsWith(side)).toBe(true);
+    expect(visibleWidth(line)).toBe(80);
+  }
+  expect(plain(interior).map(insideFrame)).toEqual([
     " Codex · Usage",
     " Account allowance",
     expect.stringContaining("escape/ctrl+c/enter close"),
-    "─".repeat(80),
   ]);
-  expect(lines[0]).toBe(new DynamicBorder((text) => theme.fg("border", text)).render(80)[0]);
-  expect(lines[1]).toBe(
-    theme.bold(theme.fg("accent", new Text("Codex · Usage", 1, 0).render(80)[0])),
-  );
-  expect(borderRender).toHaveBeenCalledWith(80);
-  expect(textRender).toHaveBeenCalledWith(80);
-  expect(containerRender).toHaveBeenCalledWith(80);
-  expect(scrollRender).toHaveBeenCalledWith(80);
+  expect(textRender).toHaveBeenCalledWith(78);
+  expect(containerRender).toHaveBeenCalledWith(78);
+  expect(scrollRender).toHaveBeenCalledWith(78);
 });
 
 describe.each([
@@ -106,16 +109,33 @@ describe.each([
     const { view, terminal } = setup(initial);
     for (const rows of [0, 1, 2, 3, 4, 5, 6, 7, 10, 24]) {
       terminal.rows = rows;
-      for (const width of [0, 1, 2, 3, 8, 20, 80]) {
+      for (const width of [0, 1, 2, 3, 4, 5, 8, 20, 80]) {
         const lines = view.render(width);
-        expect(lines.length, `width=${width}, rows=${rows}`).toBeLessThanOrEqual(
-          rows >= 7 ? rows - 2 : rows,
-        );
+        const height = rows >= 7 ? rows - 2 : rows;
+        expect(lines.length, `width=${width}, rows=${rows}`).toBeLessThanOrEqual(height);
         for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
         if (!width || !rows) expect(lines).toEqual([]);
+        const text = plain(lines);
+        if (width >= 5 && height >= 5) {
+          expect(text[0]).toBe(`╭${"─".repeat(width - 2)}╮`);
+          expect(text.at(-1)).toBe(`╰${"─".repeat(width - 2)}╯`);
+          for (const line of text.slice(1, -1)) expect(line).toMatch(/^│.*│$/u);
+          for (const line of lines) expect(visibleWidth(line)).toBe(width);
+        } else {
+          expect(text.join("\n")).not.toMatch(/[╭╮╰╯│]/u);
+        }
       }
     }
   });
+});
+
+it("drops padding before truncating a narrow framed title or dismissal hint", () => {
+  const { view } = setup({ message: "Context summary" }, 24, "Overview");
+  expect(plain(view.render(18))[1]).toBe("│Codex · Overview│");
+  expect(plain(view.render(20))[1]).toBe("│ Codex · Overview │");
+  expect(plain(view.render(27)).at(-2)).toBe("│escape/ctrl+c/enter close│");
+  expect(plain(view.render(29)).at(-2)).toBe("│ escape/ctrl+c/enter close │");
+  expect(plain(view.render(100)).at(-2)).toContain("scroll");
 });
 
 it("keeps title and dismissal visible on short terminals, dropping borders before chrome", () => {
@@ -167,7 +187,7 @@ it("reflows on width/height resize and uses native clamping after growing the vi
   view.setContent({ message: "A long message with 中文 characters and wrapping words." });
   terminal.rows = 40;
   const expected = plain(
-    new Text("A long message with 中文 characters and wrapping words.", 1, 0).render(12),
+    new Text("A long message with 中文 characters and wrapping words.", 1, 0).render(10),
   );
   expect(body(view, 12)).toEqual(expected);
   terminal.rows = 8;
@@ -175,6 +195,20 @@ it("reflows on width/height resize and uses native clamping after growing the vi
   expect(small).toHaveLength(6);
   expect(plain(small)[1]).toContain("Codex");
   expect(plain(small).at(-2)).toContain("escape");
+});
+
+it("preserves wide graphemes and clamps scroll when the same framed report gets wider", () => {
+  const text = "中文 👩‍💻 e\u0301\nA few words that wrap on smaller screens.\nLast row";
+  const { view } = setup({ message: text }, 12);
+  const narrow = view.render(14);
+  expect(body(view, 14)[0]).toBe(" 中文 👩‍💻 e\u0301");
+  for (const line of narrow) expect(visibleWidth(line)).toBe(14);
+  view.handleInput("\x1b[6~");
+  expect(body(view, 14)[0]).not.toContain("中文");
+  expect(body(view, 14).at(-1)).toBe(" Last row");
+  const wide = view.render(80);
+  for (const line of wide) expect(visibleWidth(line)).toBe(80);
+  expect(body(view, 80)).toEqual(text.split("\n").map((line) => ` ${line}`));
 });
 
 it("uses the injected remapped actions for dismissal, scrolling, and every hint", () => {
@@ -213,7 +247,7 @@ it.each(["info", "warning", "error"] as const)(
     const { view, theme, requestRender } = setup({ message: "Result", level });
     const before = view.render(100);
     const color = level === "info" ? "text" : level;
-    expect(before[2]).toBe(theme.fg(color, new Text("Result", 1, 0).render(100)[0]));
+    expect(before[2]).toContain(theme.fg(color, new Text("Result", 1, 0).render(98)[0]));
     const nextTheme = makeTheme(201);
     const fg = vi.spyOn(theme, "fg").mockImplementation((token, text) => nextTheme.fg(token, text));
     requestRender.mockClear();
@@ -233,11 +267,11 @@ it.each(["info", "warning", "error"] as const)(
 it("shows loading text even when the body has only one row", () => {
   const { view } = setup({ loading: "Fetching allowance" }, 7);
   expect(plain(view.render(100))).toEqual([
-    "─".repeat(100),
-    " Codex · Usage",
-    expect.stringContaining("Fetching allowance"),
-    expect.stringContaining("cancel"),
-    "─".repeat(100),
+    `╭${"─".repeat(98)}╮`,
+    expect.stringMatching(/^│ Codex · Usage +│$/u),
+    expect.stringMatching(/^│.*Fetching allowance.*│$/u),
+    expect.stringMatching(/^│.*cancel.*│$/u),
+    `╰${"─".repeat(98)}╯`,
   ]);
 });
 
@@ -251,7 +285,7 @@ it("does not advertise disabled bindings or fall back to default dismissal keys"
     "tui.select.pageUp": [],
     "tui.select.pageDown": [],
   });
-  expect(plain(view.render(100)).at(-2)).toBe(" ctrl+y close");
+  expect(insideFrame(plain(view.render(100)).at(-2)!)).toBe(" ctrl+y close");
   view.handleInput("\x1b");
   view.handleInput("\x03");
   expect(onClose).not.toHaveBeenCalled();
@@ -267,7 +301,7 @@ it("animates a real Loader, refreshes its theme without a render loop, and stops
   keybindings.setUserBindings({ "tui.select.cancel": "ctrl+x", "tui.select.confirm": "ctrl+y" });
   expect(vi.getTimerCount()).toBe(1);
   const first = view.render(100);
-  expect(loaderRender).toHaveBeenCalledWith(100);
+  expect(loaderRender).toHaveBeenCalledWith(98);
   expect(plain(first).at(-2)).toContain("ctrl+x cancel");
   expect(plain(first).at(-2)).not.toContain("ctrl+y");
   view.handleInput("\x19");
@@ -280,7 +314,7 @@ it("animates a real Loader, refreshes its theme without a render loop, and stops
   const nextTheme = makeTheme(201);
   vi.spyOn(theme, "fg").mockImplementation((token, text) => nextTheme.fg(token, text));
   requestRender.mockClear();
-  expect(view.render(100).join("\n")).toContain(nextTheme.getFgAnsi("muted"));
+  expect(view.render(100)[2]).toContain(nextTheme.getFgAnsi("muted"));
   expect(requestRender).not.toHaveBeenCalled();
   view.invalidate();
   view.setContent({ message: "Failed to fetch allowance", level: "error" });
